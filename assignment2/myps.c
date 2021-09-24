@@ -13,6 +13,7 @@
 #include <linux/kdev_t.h>   // device 번호 추출을 위한 매크로 정의되어있는 파일
 
 #define _BSD_SOURCE
+#define _GNU_SOURCE
 #define MAX_PROC 8192
 #define BUF_SIZE 1024
 
@@ -26,10 +27,10 @@ typedef struct procinfo{
     unsigned long rss;              // resident set size
     char tty[16];                   // 터미널 번호 o
     char state[8];                  // 상태 o
-    char start_time[8];             // 시작시간 o
-    char time[8];                   // 총 CPU사용시간
-    char command[1024];             // 명령어 간략히
-    char command_f[1024];           // 명령어 전체 (옵션 하나라도 붙는 경우)
+    char start_time[16];            // 시작시간 o
+    char time[16];                  // 총 CPU사용시간
+    char exename[1024];             // 실행 파일
+    char cmdline[1024];             // 명령어 (옵션 하나라도 붙는 경우)
     unsigned long utime;            // time spent in user mode in clock ticks
     unsigned long stime;            // time spent in kernel mode in clock ticks
     unsigned long st_time;          // time when the process started in clock ticks
@@ -62,16 +63,12 @@ void get_msize(char *stat_path, unsigned long *vsz, unsigned long *rss); // vsz,
 void calc_mem_usage(unsigned long rss, double *ret); // memory usage를 계산하는 함수
 void get_state(char *pid_path, pid_t pid, char state[8]); // state를 가져오는 함수
 void calc_start(proc *proc_entry); // 시작시간을 계산하는 함수
-// void calc_time_use(char time[8]); // CPU 사용시간 계산하는 함수
+void calc_time_use(proc *proc_entry); // CPU 사용시간 계산하는 함수
+void get_command(char *pid_path, proc *proc_entry); // 실행 명령어를 가져오는 함수
 
 unsigned long convert_to_kb(unsigned long kib); // kib -> kb 단위 변환 함수
 
 int main(int argc, char *argv[]){
-
-    init();
-    make_proclist_entry();
-    //print_proclist();
-
     for(int i=1; i<argc; ++i){ // get options from argument
         for(int j=0; j<strlen(argv[i]); ++j){
             switch(argv[i][j]){
@@ -87,9 +84,20 @@ int main(int argc, char *argv[]){
                 case 'r': // only running processes
                     options[3] = true;
                     break;
+                default:
+                    fprintf(stderr, "Error : Unknown option '%c'\nUsage : myps <a|u|x|r>\n", argv[i][j]);
+                    exit(-1);
             }
         }
     }
+    printf("a: %d\n", options[0]);
+    printf("u: %d\n", options[1]);
+    printf("x: %d\n", options[2]);
+    printf("r: %d\n", options[3]);
+
+    init();
+    make_proclist_entry();
+    //print_proclist();
     return 0;
 }
 
@@ -166,15 +174,15 @@ void make_proclist_entry(){
         calc_start(&proc_entry);
         
         // time 저장
+        calc_time_use(&proc_entry);
 
         // command 저장
-
-        // command_f 저장
+        get_command(pid_path, &proc_entry);
 
         memcpy(&plist[num_of_proc], &proc_entry, sizeof(proc));
         num_of_proc++;
 
-        printf("%s, %.1lf, %u, %s\n", plist[num_of_proc-1].username, plist[num_of_proc-1].cpu_usage, plist[num_of_proc-1].pid, plist[num_of_proc-1].start_time);
+        //printf("%s, %.1lf, %u, %s, %s\n", plist[num_of_proc-1].username, plist[num_of_proc-1].cpu_usage, plist[num_of_proc-1].pid, plist[num_of_proc-1].start_time, plist[num_of_proc-1].time);
     }
     closedir(dp);
 }
@@ -383,7 +391,7 @@ void calc_start(proc *proc_entry){
 	st_time = time(NULL)-(uptime-(st_time/clk_tck)); // 현재시간 - 시스템 부팅 이후 시간 + 프로세스 시작시간
 	struct tm *tms= localtime(&st_time);
 	if((time(NULL)-st_time) < 60*60*24){
-		strftime(proc_entry->start_time, 8, "%H:%M", tms); // "시:분" 포맷 (24h)
+        sprintf(proc_entry->start_time, "%02d:%02d", tms->tm_hour, tms->tm_min); // "시:분" 포맷 (24h)
 	}
 	else if((time(NULL)-st_time) < 60*60*24*7){
 		strftime(proc_entry->start_time, 8, "%b %d", tms); // "월 일" 포맷
@@ -393,8 +401,50 @@ void calc_start(proc *proc_entry){
 	}
 }
 
-// void calc_time_use(char time[8]){
-// }
+void calc_time_use(proc *proc_entry){
+    // 옵션 있으면 "분:초" 포맷, 옵션 없으면 "시:분:초" 포맷 
+    unsigned long tt_time = proc_entry->total_time/clk_tck;
+	struct tm *tms= localtime(&tt_time);
+	if(options[0] || options[1] || options[2] || options[3]){
+        sprintf(proc_entry->time, "%1d:%02d", tms->tm_min, tms->tm_sec);
+    }
+	else{
+        sprintf(proc_entry->time, "%02d:%02d:%02d", tms->tm_hour, tms->tm_min, tms->tm_sec);
+    }
+}
+
+void get_command(char *pid_path, proc *proc_entry){
+    // 실행파일명 파싱 
+    char buf[BUF_SIZE], tmp_path[64];
+    strcpy(tmp_path, pid_path);
+    strcat(tmp_path, "/stat");
+    FILE *fp = fopen(tmp_path, "r"); // open stat file
+    fgets(buf, BUF_SIZE, fp);
+    int cnt = 0;
+    char *ptr = strtok(buf, "(");
+    while(cnt++ < 1) ptr = strtok(NULL, ")"); // stat 파일에서 2번째 토큰 추출
+    strcpy(proc_entry->exename, ptr);
+    //printf("(%s) ", proc_entry->exename);
+    fclose(fp);
+
+    // 명령줄 인자 파싱
+    strcpy(tmp_path, pid_path);
+    strcat(tmp_path, "/cmdline");
+    fp = fopen(tmp_path, "r"); // open cmdline file
+   
+    char *arg = 0;
+    size_t size = 1;
+    while(getdelim(&arg, &size, 0, fp) != -1){ // delimiter로 끊어서 읽음
+        strcat(proc_entry->cmdline, arg);
+        strcat(proc_entry->cmdline, " "); // 인자 구분을 위한 space 추가 
+    }
+
+    // 인자가 없는 경우 [exename]으로 저장
+    if(strlen(proc_entry->cmdline) == 0){
+        sprintf(proc_entry->cmdline, "[%s]", proc_entry->exename);
+    }
+    //printf("%s\n", proc_entry->cmdline);
+}
 
 void clear_proclist_entry(proc *proc_entry){
     memset(proc_entry->username, '\0', 16);
@@ -406,25 +456,26 @@ void clear_proclist_entry(proc *proc_entry){
     proc_entry->rss = 0;
     memset(proc_entry->tty, '\0', 16);
     memset(proc_entry->state, '\0', 8);
-    memset(proc_entry->start_time, '\0', 8);
-    memset(proc_entry->time, '\0', 8);
-    memset(proc_entry->command, '\0', 1024);
-    memset(proc_entry->command_f, '\0', 1024);
+    memset(proc_entry->start_time, '\0', 16);
+    memset(proc_entry->time, '\0', 16);
+    memset(proc_entry->exename, '\0', 1024);
+    memset(proc_entry->cmdline, '\0', 1024);
+    proc_entry->utime = 0;
+    proc_entry->stime = 0;
+    proc_entry->st_time = 0;
+    proc_entry->total_time = 0;
 }
 
 void print_proclist(){
-    // 항목 필터링 하는 로직 --> 추후 출력 부분에서 활용 예정
-    // char p_tty[16];
-    // get_tty(get_tty_nr(p_pid), p_tty); // 프로세스의 tty 가져옴
-    // if(!options[0]){ // a 옵션 없는 경우, uid가 본인과 다르면 넘어감
-    //     if(stat_buf.st_uid != cur_uid) continue; 
-    // }
-    // if(!options[2]){ // x 옵션 없는 경우, 컨트롤 터미널 없는 프로세스는 넘어감
-    //     if(!strcmp(p_tty, "?")) continue;
-    // }
-    // if(!options[0] && !options[1] && !options[2]){ // a, u, x 옵션 없는 경우, tty가 본인과 다르면 넘어감
-    //     if(strcmp(p_tty, cur_tty)) continue;
-    // }
+    // 옵션 하나라도 붙으면 stat, cmdline 출력
+    // r옵션 붙으면 state로 필터링
+    // u옵션 붙으면 user, pid, %cpu, %mem, vsz, rss, tty, stat, start, cmdline
+
+    // 모든 옵션 x -> tty본인과 다르면 continue
+    // a옵션 x -> uid 본인과 다르면 continue
+    // x옵션 x -> 컨트롤 터미널 없으면 continue
+
+    // 터미널 폭에 따라 cmdline 출력 끊어주기
 }
 
 unsigned long convert_to_kb(unsigned long kib){
