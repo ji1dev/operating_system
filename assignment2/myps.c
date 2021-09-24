@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <pwd.h>
 #include <math.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <linux/kdev_t.h>   // device 번호 추출을 위한 매크로 정의되어있는 파일
@@ -16,30 +17,35 @@
 #define BUF_SIZE 1024
 
 typedef struct procinfo{
-    pid_t pid;              // 프로세스 ID o
-    uid_t uid;              // UID o
-    char username[16];      // 사용자명o
-    double cpu_usage;       // cpu점유율o
-    double mem_usage;       // 메모리 점유율 o
-    unsigned long vsize;    // virtual memory size o
-    unsigned long rss;      // resident set size
-    char tty[16];           // 터미널 번호 o
-    char state[8];          // 상태 
-    char start_time[8];     // 시작시간
-    char time[8];           // 총 CPU사용시간
-    char command[1024];     // 명령어 간략히
-    char command_f[1024];   // 명령어 전체 (옵션 하나라도 붙는 경우)
+    pid_t pid;                      // 프로세스 ID o
+    uid_t uid;                      // UID o
+    char username[16];              // 사용자명o
+    double cpu_usage;               // cpu점유율o
+    double mem_usage;               // 메모리 점유율 o
+    unsigned long vsize;            // virtual memory size o
+    unsigned long rss;              // resident set size
+    char tty[16];                   // 터미널 번호 o
+    char state[8];                  // 상태 o
+    char start_time[8];             // 시작시간 o
+    char time[8];                   // 총 CPU사용시간
+    char command[1024];             // 명령어 간략히
+    char command_f[1024];           // 명령어 전체 (옵션 하나라도 붙는 경우)
+    unsigned long utime;            // time spent in user mode in clock ticks
+    unsigned long stime;            // time spent in kernel mode in clock ticks
+    unsigned long st_time;          // time when the process started in clock ticks
+    unsigned long long total_time;  // total time spent for process in seconds
 } proc;
 
-pid_t cur_pid;              // 현재 pid
-uid_t cur_uid;              // 현재 uid
-char cur_tty[16];           // 현재 tty
-unsigned long total_mem;    // total physical memory
-unsigned long clk_tck;      // num of clock ticks per second of system
-unsigned long uptime;       // uptime of system in seconds
+pid_t cur_pid;                      // 현재 pid
+uid_t cur_uid;                      // 현재 uid
+char cur_tty[16];                   // 현재 tty
+unsigned long total_mem;            // total physical memory
+unsigned long clk_tck;              // num of clock ticks per second of system
+unsigned long uptime;               // uptime of system in seconds
 
 bool options[] = {false, false, false, false}; // a, u, x, r option flag
 proc plist[MAX_PROC];
+int num_of_proc;
 
 void init(); // 프로세스 정보 가져오기 전에 필요하거나 미리 설정 가능한 값을 가져오는 함수
 void make_proclist_entry(); // 프로세스의 정보를 파싱 및 가공하는 함수
@@ -51,11 +57,12 @@ void get_tty(int tty_nr, char tty[16]); // 터미널 정보를 가져오는 함�
 void get_total_mem(); // 물리 메모리 용량을 가져오는 함수
 void get_uptime(); // 시스템의 uptime을 가져오는 함수
 void get_username(); // username 가져오는 함수
-void calc_cpu_usage(char *stat_path, double *ret); // cpu usage를 계산하는 함수
+void calc_cpu_usage(char *stat_path, proc *proc_entry); // cpu usage를 계산하는 함수
 void get_msize(char *stat_path, unsigned long *vsz, unsigned long *rss); // vsz, rss값을 가져오는 함수
 void calc_mem_usage(unsigned long rss, double *ret); // memory usage를 계산하는 함수
-void get_state(char *pid_path, char state[8]); // state를 가져오는 함수
-
+void get_state(char *pid_path, pid_t pid, char state[8]); // state를 가져오는 함수
+void calc_start(proc *proc_entry); // 시작시간을 계산하는 함수
+// void calc_time_use(char time[8]); // CPU 사용시간 계산하는 함수
 
 unsigned long convert_to_kb(unsigned long kib); // kib -> kb 단위 변환 함수
 
@@ -140,7 +147,7 @@ void make_proclist_entry(){
         get_username(proc_entry.uid, proc_entry.username);
 
         // cpu_usage 저장
-        calc_cpu_usage(stat_path, &proc_entry.cpu_usage);
+        calc_cpu_usage(stat_path, &proc_entry);
 
         // vsz, rss 저장
         get_msize(stat_path, &proc_entry.vsize, &proc_entry.rss);
@@ -153,15 +160,21 @@ void make_proclist_entry(){
         get_tty(get_tty_nr(proc_entry.pid), proc_entry.tty);
 
         // state 저장
-        get_state(pid_path, proc_entry.state);
+        get_state(pid_path, proc_entry.pid, proc_entry.state);
 
         // start_time 저장
-
+        calc_start(&proc_entry);
+        
         // time 저장
 
         // command 저장
 
         // command_f 저장
+
+        memcpy(&plist[num_of_proc], &proc_entry, sizeof(proc));
+        num_of_proc++;
+
+        printf("%s, %.1lf, %u, %s\n", plist[num_of_proc-1].username, plist[num_of_proc-1].cpu_usage, plist[num_of_proc-1].pid, plist[num_of_proc-1].start_time);
     }
     closedir(dp);
 }
@@ -227,17 +240,13 @@ void get_username(uid_t uid, char user[32]){
     struct passwd *pw = getpwuid(uid);
     strcpy(tmp, pw->pw_name); // passwd 파일에서 username 추출
     int user_len = strlen(tmp);
-    if(user_len >= 8) tmp[7] = '+'; // username이 8자리 이상이면 '+'기호로 ellipsis
+    if(user_len > 8) tmp[7] = '+'; // username이 8자리 이상이면 '+'기호로 ellipsis
     strncpy(user, tmp, 8); // 8자리까지 복사
     //printf("%s\n", user);
 }
 
-void calc_cpu_usage(char *stat_path, double *ret){
-    unsigned long utime;            // time spent in user mode in clock ticks
-    unsigned long stime;            // time spent in kernel mode in clock ticks
-    unsigned long start_time;       // time when the process started in clock ticks
-    double elapsed_time;            // total elapsed time since process started in seconds
-    unsigned long long total_time;  // total time spent for process in seconds
+void calc_cpu_usage(char *stat_path, proc *proc_entry){
+    double elapsed_time; // total elapsed time since process started in seconds
     double usage;
 
     char buf[BUF_SIZE];
@@ -249,22 +258,22 @@ void calc_cpu_usage(char *stat_path, double *ret){
     while(cnt++ < 22){ // stat 파일에서 14, 15, 22번째 토큰 추출
         switch(cnt){
             case 14:
-                sscanf(ptr, "%lu", &utime);
+                sscanf(ptr, "%lu", &proc_entry->utime);
                 break;
             case 15:
-                sscanf(ptr, "%lu", &stime);
+                sscanf(ptr, "%lu", &proc_entry->stime);
                 break;
             case 22:
-                sscanf(ptr, "%lu", &start_time);
+                sscanf(ptr, "%lu", &proc_entry->st_time);
                 break;
         }
         ptr = strtok(NULL, " ");
     }
-    total_time = utime+stime;
-    elapsed_time = (double)(uptime-(start_time/clk_tck));
-    usage = ((total_time/clk_tck)/elapsed_time)*100;
+    proc_entry->total_time = proc_entry->utime + proc_entry->stime;
+    elapsed_time = (double)(uptime-(proc_entry->st_time/clk_tck));
+    usage = ((proc_entry->total_time/clk_tck)/elapsed_time)*100;
     if(usage<0 || usage>100 || isnan(usage) || isinf(usage)) usage = 0; // 표현할 수 없는 값 예외처리
-    *ret = usage;
+    proc_entry->cpu_usage = usage;
     fclose(fp);
 }
 
@@ -299,30 +308,93 @@ void calc_mem_usage(unsigned long rss, double *ret){
     *ret = (double)rss/total_mem*100;
 }
 
-void get_state(char *pid_path, char state[8]){
-    // Additional state characters
-    // <: high-priority (not nice to other users)
-    // N: low-priority (nice to other users)
-    // L: has pages locked into memory (for real-time and custom IO)
-    // s: a session leader
-    // l: multi-threaded (using CLONE_THREAD, like NPTL pthreads do)
-    // +: in the foreground process group
+void get_state(char *pid_path, pid_t pid, char state[8]){
+    // RSDZTW: 기본 state -> stat 3번째
+    // <: high-priority -> stat 19번째
+    // N: low-priority -> stat 19번째
+    // L: has pages locked into memory -> status 19번째
+    // s: a session leader -> stat 6번째
+    // l: multi-threaded -> stat 20번째
+    // +: in the foreground process group -> stat 8번째
+
     char buf[BUF_SIZE], tmp_path[64];
     strcpy(tmp_path, pid_path);
     strcat(tmp_path, "/status");
+    FILE *fp = fopen(tmp_path, "r"); // open status file to get VmLck value
 
-    // FILE *fp = fopen(path, "r"); // open status file to get VmLck value
-    // fgets(buf, BUF_SIZE, fp);
+    // VmLck 값 추출
+    int cnt = 0;
+    unsigned long vmlck = 0;
+    while(cnt < 19){ // status 파일의 19번째 라인 추출
+        fgets(buf, BUF_SIZE, fp);
+        cnt++;
+    }
+    if(strstr(buf, "VmLck")){ // VmLck 항목이 있는 프로세스는 값 갱신
+        sscanf(buf, "%lu", &vmlck);
+        //printf("%lu\n", vmlck);
+    }
+    fclose(fp);
+    
+    // state, sid, tpgid, nice, num of thread 값 추출
+    strcpy(tmp_path, pid_path);
+    strcat(tmp_path, "/stat");
+    fp = fopen(tmp_path, "r"); // open stat file
+    fgets(buf, BUF_SIZE, fp);
 
-    /*
-    3: state (state of proc) -> 기본 state 'RSDZTW'
-    6: sid (session ID of the proc) -> 's'
-    8: tpgid (ID of foreground process grp of the controlling term of proc) -> '+'
-    19: nice (the nice value, -20(low) ~ 19(high priority)) -> 'N', '<'
-    20: threads (num of threads in this proc) -> 'l'
-    */
-    //fclose(fp);
+    int sid, tpgid, nice, threads;
+    char *ptr = strtok(buf, " ");
+    cnt = 0;
+    while(cnt++ < 20){ // stat 파일에서 3, 6, 8, 19, 20
+        switch(cnt){
+            case 3:
+                sscanf(ptr, "%s", state); 
+                break;
+            case 6:
+                sscanf(ptr, "%d", &sid);
+                break;
+            case 8:
+                sscanf(ptr, "%d", &tpgid);
+                break;                                
+            case 19:
+                sscanf(ptr, "%d", &nice);
+                break;
+            case 20:
+                sscanf(ptr, "%d", &threads);
+                break;
+        }
+        ptr = strtok(NULL, " ");
+    }
+    // printf("%s, %d, %d, %d, %d\n", state, nice, sid, threads, tpgid);
+    
+    // 조건 만족하는 추가 state 붙여주기
+    if(nice < 0) strcat(state, "<"); // high priority
+    else if(nice > 0) strcat(state, "N"); // low priority
+    if(vmlck > 0) strcat(state, "L"); // has page locked
+    if(sid == pid) strcat(state, "s"); // session leader
+    if(threads > 1) strcat(state, "l"); // multi threads
+    if(tpgid != -1) strcat(state, "+"); // foreground process
+    fclose(fp);
 }
+
+void calc_start(proc *proc_entry){
+    // 시간을 계산하고, 하루, 1주, 나머지 경우로 나눠서 각각 다른 포맷의 문자열로 변환
+    // (프로세스 시작 시간) = (현재시각)-(프로세스 실행 시간)
+    unsigned long st_time = proc_entry->st_time;
+	st_time = time(NULL)-(uptime-(st_time/clk_tck)); // 현재시간 - 시스템 부팅 이후 시간 + 프로세스 시작시간
+	struct tm *tms= localtime(&st_time);
+	if((time(NULL)-st_time) < 60*60*24){
+		strftime(proc_entry->start_time, 8, "%H:%M", tms); // "시:분" 포맷 (24h)
+	}
+	else if((time(NULL)-st_time) < 60*60*24*7){
+		strftime(proc_entry->start_time, 8, "%b %d", tms); // "월 일" 포맷
+	}
+	else{
+		strftime(proc_entry->start_time, 8, "%y", tms); // "연도 끝 두자리" 포맷
+	}
+}
+
+// void calc_time_use(char time[8]){
+// }
 
 void clear_proclist_entry(proc *proc_entry){
     memset(proc_entry->username, '\0', 16);
