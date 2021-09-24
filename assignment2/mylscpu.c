@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
+#include <ctype.h>
 #include <sys/utsname.h>
 
 typedef struct vulnerability{
@@ -135,14 +136,46 @@ void getSysInfo(){
     }
     for(int i=0; i<cidx; ++i){
         char idxpath[128], tmp[32], *unit = "KiB";
+
+        // 캐시 사이즈 파싱
         sprintf(tmp, "%s%d%s", "/index", i, "/size");
         strcpy(idxpath, dirname);
         strcat(idxpath, tmp);
         fp = fopen(idxpath, "r");
         fgets(buf, sizeof(buf), fp);
-        int csize = atoi(strtok(buf, "K")); // 코어당 cache 용량 추출
-        csize *= mycpu->cores; // 전체 cache 용량
-        if(csize >= 1024){ // 1024KiB 넘어가면 MiB로 단위 변환
+        int csize = atoi(strtok(buf, "K")); // 프로세서당 cache 용량 추출
+        fclose(fp);
+
+        // 캐시 공유하는 logical processor 확인하고 사이즈 저장
+        sprintf(tmp, "%s%d%s", "/index", i, "/shared_cpu_list");
+        strcpy(idxpath, dirname);
+        strcat(idxpath, tmp);
+
+        // strcpy(idxpath, "test_shared_cpu_list"); // test file
+        
+        fp = fopen(idxpath, "r");
+        fgets(buf, sizeof(buf), fp);
+        int shcores_range[2], shc_len = strlen(buf)-1, num = 0;
+        csize *= mycpu->cores; // 현재 논리 프로세서만 사용하는 캐시이면 프로세서 개수를 곱해줌
+        if(shc_len > 1){ // 여러 프로세스가 공유하는 캐시인 경우
+            for(int i=0; i<shc_len; ++i){           
+                if(!isdigit(buf[i])){ // 구분 문자 나오는 경우 값 저장하고 넘어감
+                    shcores_range[0] = num; // 첫 프로세서 번호
+                    num = 0;
+                    continue;
+                }
+                num = num*10+buf[i]-'0';
+            }
+            shcores_range[1] = num; // 마지막 프로세서 번호
+
+            // 공유하는 프로세서 개수만큼 나눠줌
+            int shcores = shcores_range[1]-shcores_range[0]+1;
+            csize /= shcores;
+        }
+        fclose(fp);
+
+        // 1024KiB 넘어가면 MiB로 단위 변환
+        if(csize >= 1024){ 
             csize /= 1024;
             unit = "MiB";
         }
@@ -153,8 +186,6 @@ void getSysInfo(){
             case 2: strcpy(mycpu->L2, tmp); break;
             case 3: strcpy(mycpu->L3, tmp); break;
         }
-        //printf("%s, %d %s\n", idxpath, csize, unit);
-        fclose(fp);
     }
 
     // Vulnerabilities
