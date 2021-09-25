@@ -135,17 +135,15 @@ void make_proclist_entry(){
         proc proc_entry; // 프로세스 리스트 엔트리 생성
         clear_proclist_entry(&proc_entry); // 구조체 멤버 초기화
         
+        // pid, uid 저장
+        proc_entry.pid = p_pid;
+        proc_entry.uid = stat_buf.st_uid;
+        
         char stat_path[64];
         strcpy(stat_path, pid_path);
         strcat(stat_path, "/stat");
         FILE *fp = fopen(stat_path, "r"); // open stat file
-        stat(stat_path, &stat_buf); // stat파일의 stat 구조체 가져옴
-
-        // pid 저장
-        proc_entry.pid = p_pid;
-
-        // uid 저장
-        proc_entry.uid = stat_buf.st_uid;
+        // stat(pid_path, &stat_buf); // stat파일의 stat 구조체 가져옴
 
         // username 저장
         get_username(proc_entry.uid, proc_entry.username);
@@ -456,19 +454,6 @@ void clear_proclist_entry(proc *proc_entry){
 }
 
 void print_proclist(){
-    /*
-    1. u 옵션 포함
-        -> 헤더: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND
-
-    2. u미포함
-        -> 헤더: PID TTY STAT TIME COMMAND
-
-    3. 공통
-        -> a없으면: uid본인과 다르면 continue
-        -> x없으면: 컨트롤 터미널 없으면 continue
-        -> r없으면: strchr(state, "R") 아니면 continue
-    */
-
     // 터미널 창의 크기를 가져옴
     struct winsize term;
     ioctl(STDOUT_FILENO, TIOCGWINSZ, &term);
@@ -478,8 +463,8 @@ void print_proclist(){
     if(!options[0] && !options[1] && !options[2] && !options[3]){
         char tmp[2048], result[2048];
         sprintf(tmp, "%7s %-8s %8s %s", "PID", "TTY", "TIME", "CMD");
-        strncpy(result, tmp, term_width);
-        printf("%s\n", result);
+        strncpy(result, tmp, term_width); // 터미널 너비만큼만 복사 후 출력
+        printf("%s\n", result); // 헤더 출력
 
         for(int i=0; i<num_of_proc; ++i){
             if(strcmp(plist[i].tty, cur_tty)) continue; // 본인의 tty와 다른 프로세스는 넘어감
@@ -490,11 +475,11 @@ void print_proclist(){
     }
     // u옵션이 포함된 경우
     else if(options[1]){
-        printf("u 포함\n");
+        //
     }
     // u옵션 미포함된 경우
     else{
-        printf("u 미포함\n");
+        //
     }
 }
 
