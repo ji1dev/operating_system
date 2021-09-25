@@ -206,8 +206,20 @@ void getSysInfo(){
         strcat(vulnpath, dlist[i]->d_name);
         fp = fopen(vulnpath, "r");
         fgets(buf, sizeof(buf), fp);
-        strcpy(mycpu->vlist[i].name, dlist[i]->d_name); // 취약점 이름
-        strcat(mycpu->vlist[i].name, ":");
+
+        // 취약점 이름 첫 문자만 대문자로 바꿔서 저장
+        char *ptr = strtok(dlist[i]->d_name, "_");
+        int idx = 0;
+        while(ptr != NULL){
+            if(!idx){
+                ptr[0] = ptr[0]-'a'+'A';
+                idx = 1;
+            }
+            strcat(mycpu->vlist[i].name, ptr);
+            strcat(mycpu->vlist[i].name, " ");
+            ptr = strtok(NULL, "_");
+        }
+        mycpu->vlist[i].name[strlen(mycpu->vlist[i].name)-1] = ':';
         strncpy(mycpu->vlist[i].detail, buf, strlen(buf)-1); // 취약점 내용
     }
     mycpu->vulncnt = didx; // 취약점 개수
