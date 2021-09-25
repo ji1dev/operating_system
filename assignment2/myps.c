@@ -10,6 +10,7 @@
 #include <time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/ioctl.h>
 #include <linux/kdev_t.h>   // device 번호 추출을 위한 매크로 정의되어있는 파일
 
 #define _BSD_SOURCE
@@ -29,7 +30,7 @@ typedef struct procinfo{
     char state[8];                  // 상태 o
     char start_time[16];            // 시작시간 o
     char time[16];                  // 총 CPU사용시간
-    char exename[1024];             // 실행 파일
+    char exename[512];              // 실행 파일
     char cmdline[1024];             // 명령어 (옵션 하나라도 붙는 경우)
     unsigned long utime;            // time spent in user mode in clock ticks
     unsigned long stime;            // time spent in kernel mode in clock ticks
@@ -90,14 +91,9 @@ int main(int argc, char *argv[]){
             }
         }
     }
-    printf("a: %d\n", options[0]);
-    printf("u: %d\n", options[1]);
-    printf("x: %d\n", options[2]);
-    printf("r: %d\n", options[3]);
-
     init();
     make_proclist_entry();
-    //print_proclist();
+    print_proclist();
     return 0;
 }
 
@@ -181,8 +177,6 @@ void make_proclist_entry(){
 
         memcpy(&plist[num_of_proc], &proc_entry, sizeof(proc));
         num_of_proc++;
-
-        //printf("%s, %.1lf, %u, %s, %s\n", plist[num_of_proc-1].username, plist[num_of_proc-1].cpu_usage, plist[num_of_proc-1].pid, plist[num_of_proc-1].start_time, plist[num_of_proc-1].time);
     }
     closedir(dp);
 }
@@ -250,7 +244,6 @@ void get_username(uid_t uid, char user[32]){
     int user_len = strlen(tmp);
     if(user_len > 8) tmp[7] = '+'; // username이 8자리 이상이면 '+'기호로 ellipsis
     strncpy(user, tmp, 8); // 8자리까지 복사
-    //printf("%s\n", user);
 }
 
 void calc_cpu_usage(char *stat_path, proc *proc_entry){
@@ -339,7 +332,6 @@ void get_state(char *pid_path, pid_t pid, char state[8]){
     }
     if(strstr(buf, "VmLck")){ // VmLck 항목이 있는 프로세스는 값 갱신
         sscanf(buf, "%lu", &vmlck);
-        //printf("%lu\n", vmlck);
     }
     fclose(fp);
     
@@ -372,8 +364,7 @@ void get_state(char *pid_path, pid_t pid, char state[8]){
         }
         ptr = strtok(NULL, " ");
     }
-    // printf("%s, %d, %d, %d, %d\n", state, nice, sid, threads, tpgid);
-    
+
     // 조건 만족하는 추가 state 붙여주기
     if(nice < 0) strcat(state, "<"); // high priority
     else if(nice > 0) strcat(state, "N"); // low priority
@@ -424,7 +415,6 @@ void get_command(char *pid_path, proc *proc_entry){
     char *ptr = strtok(buf, "(");
     while(cnt++ < 1) ptr = strtok(NULL, ")"); // stat 파일에서 2번째 토큰 추출
     strcpy(proc_entry->exename, ptr);
-    //printf("(%s) ", proc_entry->exename);
     fclose(fp);
 
     // 명령줄 인자 파싱
@@ -443,7 +433,6 @@ void get_command(char *pid_path, proc *proc_entry){
     if(strlen(proc_entry->cmdline) == 0){
         sprintf(proc_entry->cmdline, "[%s]", proc_entry->exename);
     }
-    //printf("%s\n", proc_entry->cmdline);
 }
 
 void clear_proclist_entry(proc *proc_entry){
@@ -467,15 +456,46 @@ void clear_proclist_entry(proc *proc_entry){
 }
 
 void print_proclist(){
-    // 옵션 하나라도 붙으면 stat, cmdline 출력
-    // r옵션 붙으면 state로 필터링
-    // u옵션 붙으면 user, pid, %cpu, %mem, vsz, rss, tty, stat, start, cmdline
+    /*
+    1. u 옵션 포함
+        -> 헤더: USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND
 
-    // 모든 옵션 x -> tty본인과 다르면 continue
-    // a옵션 x -> uid 본인과 다르면 continue
-    // x옵션 x -> 컨트롤 터미널 없으면 continue
+    2. u미포함
+        -> 헤더: PID TTY STAT TIME COMMAND
 
-    // 터미널 폭에 따라 cmdline 출력 끊어주기
+    3. 공통
+        -> a없으면: uid본인과 다르면 continue
+        -> x없으면: 컨트롤 터미널 없으면 continue
+        -> r없으면: strchr(state, "R") 아니면 continue
+    */
+
+    // 터미널 창의 크기를 가져옴
+    struct winsize term;
+    ioctl(STDOUT_FILENO, TIOCGWINSZ, &term);
+    int term_width = term.ws_col;
+
+    // 아무 옵션이 없는 경우
+    if(!options[0] && !options[1] && !options[2] && !options[3]){
+        char tmp[2048], result[2048];
+        sprintf(tmp, "%7s %-8s %8s %s", "PID", "TTY", "TIME", "CMD");
+        strncpy(result, tmp, term_width);
+        printf("%s\n", result);
+
+        for(int i=0; i<num_of_proc; ++i){
+            if(strcmp(plist[i].tty, cur_tty)) continue; // 본인의 tty와 다른 프로세스는 넘어감
+            sprintf(tmp, "%7u %-8s %8s %s", plist[i].pid, plist[i].tty, plist[i].time, plist[i].exename);
+            strncpy(result, tmp, term_width);
+            printf("%s\n", result); // 각 프로세스 엔트리 출력
+        }
+    }
+    // u옵션이 포함된 경우
+    else if(options[1]){
+        printf("u 포함\n");
+    }
+    // u옵션 미포함된 경우
+    else{
+        printf("u 미포함\n");
+    }
 }
 
 unsigned long convert_to_kb(unsigned long kib){
