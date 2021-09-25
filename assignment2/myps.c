@@ -475,11 +475,58 @@ void print_proclist(){
     }
     // u옵션이 포함된 경우
     else if(options[1]){
-        //
+        char tmp[2048], result[2048];
+        sprintf(tmp, "%-8s %7s %5s %5s %6s %6s %-8s %-5s %-6s %5s %s"
+                , "USER", "PID", "\%CPU", "%MEM"
+                , "VSZ", "RSS", "TTY", "STAT"
+                , "START", "TIME", "COMMAND");
+        strncpy(result, tmp, term_width);
+        printf("%s\n", result);
+
+        for(int i=0; i<num_of_proc; ++i){
+            if(!options[2]){
+                if(!strcmp(plist[i].tty, "?")) continue; 
+            }
+            if(options[3]){
+                if(!strstr(plist[i].state, "R")) continue;
+            }
+            sprintf(tmp, "%-8s %7u %5.1lf %5.1lf %6lu %6lu %-8s %-5s %-6s %5s %s"
+                    , plist[i].username, plist[i].pid, plist[i].cpu_usage, plist[i].mem_usage
+                    , plist[i].vsize, plist[i].rss, plist[i].tty, plist[i].state
+                    , plist[i].start_time, plist[i].time, plist[i].cmdline);
+            strncpy(result, tmp, term_width);
+            printf("%s\n", result);
+        }
     }
     // u옵션 미포함된 경우
     else{
-        //
+        char tmp[2048], result[2048];
+        sprintf(tmp, "%7s %-8s %-6s %5s %s", "PID", "TTY", "STAT", "TIME", "COMMAND");
+        strncpy(result, tmp, term_width);
+        printf("%s\n", result);
+
+        for(int i=0; i<num_of_proc; ++i){
+            if(options[0] != options[2]){
+                if(options[0]){
+                    // a옵션 : all with tty, including other users
+                    // 터미널에 종속되지 않고 돌아가는 프로세스는 넘어감 (x옵션 붙는 경우 제외)
+                    if(!strcmp(plist[i].tty, "?")) continue; 
+                }
+                if(options[2]){
+                    // x옵션 : processes without controlling ttys
+                    // 제어 터미널 없으면 넘어감
+                    if(plist[i].uid != cur_uid)	continue;
+                }
+            }
+            if(options[3]){
+                // r옵션 : only running processes
+                // state에 'R'없으면 넘어감
+                if(!strstr(plist[i].state, "R")) continue;
+            }
+            sprintf(tmp, "%7u %-8s %-6s %5s %s", plist[i].pid, plist[i].tty, plist[i].state, plist[i].time, plist[i].cmdline);
+            strncpy(result, tmp, term_width);
+            printf("%s\n", result);
+        }
     }
 }
 
