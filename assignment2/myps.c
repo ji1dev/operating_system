@@ -19,16 +19,16 @@
 #define BUF_SIZE 1024
 
 typedef struct procinfo{
-    pid_t pid;                      // 프로세스 ID o
-    uid_t uid;                      // UID o
-    char username[16];              // 사용자명o
-    double cpu_usage;               // cpu점유율o
-    double mem_usage;               // 메모리 점유율 o
-    unsigned long vsize;            // virtual memory size o
+    pid_t pid;                      // 프로세스 ID
+    uid_t uid;                      // UID
+    char username[16];              // 사용자명
+    double cpu_usage;               // cpu점유율
+    double mem_usage;               // 메모리 점유율
+    unsigned long vsize;            // virtual memory size
     unsigned long rss;              // resident set size
-    char tty[16];                   // 터미널 번호 o
-    char state[8];                  // 상태 o
-    char start_time[16];            // 시작시간 o
+    char tty[16];                   // 터미널 번호
+    char state[8];                  // 상태
+    char start_time[16];            // 시작시간
     char time[16];                  // 총 CPU사용시간
     char exename[512];              // 실행 파일
     char cmdline[1024];             // 명령어 (옵션 하나라도 붙는 경우)
@@ -51,7 +51,7 @@ int num_of_proc;
 
 void init(); // 프로세스 정보 가져오기 전에 필요하거나 미리 설정 가능한 값을 가져오는 함수
 void make_proclist_entry(); // 프로세스의 정보를 파싱 및 가공하는 함수
-void clear_proclist_entry(); // 프로세스 정보를 초기화하는 함수
+void clear_proclist_entry(proc *proc_entry); // 프로세스 정보를 초기화하는 함수
 void print_proclist(); // 완성된 프로세스 정보 리스트를 출력하는 함수
 
 int get_tty_nr(pid_t pid); // 프로세스의 컨트롤 터미널을 가져오는 함수
@@ -104,7 +104,6 @@ void init(){
     get_tty(get_tty_nr(cur_pid), cur_tty); // get current tty with tty_nr
     get_total_mem(); // total memory
     get_uptime(); // uptime
-    //printf("cur_tty = %s\n", cur_tty);
 }
 
 void make_proclist_entry(){
@@ -156,7 +155,6 @@ void make_proclist_entry(){
 
         // mem_usage 저장
         calc_mem_usage(proc_entry.rss, &proc_entry.mem_usage);
-        //printf("%.1lf\n", proc_entry.mem_usage);
 
         // tty 저장
         get_tty(get_tty_nr(proc_entry.pid), proc_entry.tty);
@@ -295,7 +293,7 @@ void get_msize(char *stat_path, unsigned long *vsz, unsigned long *rss){
         ptr = strtok(NULL, " ");
     }
     *vsz = (*vsz)/1024; // Byte -> KiB
-    *rss = (*rss)*4; // (num of working segment + num of code segment pages)*4, kB
+    *rss = (*rss)*4; // (num of working segment + num of code segment pages)*4
     fclose(fp);
 }
 
@@ -378,7 +376,7 @@ void calc_start(proc *proc_entry){
     // (프로세스 시작 시간) = (현재시각)-(프로세스 실행 시간)
     unsigned long st_time = proc_entry->st_time;
 	st_time = time(NULL)-(uptime-(st_time/clk_tck)); // 현재시간 - 시스템 부팅 이후 시간 + 프로세스 시작시간
-	struct tm *tms= localtime(&st_time);
+	struct tm *tms= gmtime(&st_time);
 	if((time(NULL)-st_time) < 60*60*24){
         sprintf(proc_entry->start_time, "%02d:%02d", tms->tm_hour, tms->tm_min); // "시:분" 포맷 (24h)
 	}
@@ -463,24 +461,24 @@ void print_proclist(){
     if(!options[0] && !options[1] && !options[2] && !options[3]){
         char tmp[2048], result[2048];
         sprintf(tmp, "%7s %-8s %8s %s", "PID", "TTY", "TIME", "CMD");
-        strncpy(result, tmp, term_width); // 터미널 너비만큼만 복사 후 출력
+        strncpy(result, tmp, term_width-1); // 터미널 너비만큼만 복사 후 출력
         printf("%s\n", result); // 헤더 출력
 
         for(int i=0; i<num_of_proc; ++i){
             if(strcmp(plist[i].tty, cur_tty)) continue; // 본인의 tty와 다른 프로세스는 넘어감
             sprintf(tmp, "%7u %-8s %8s %s", plist[i].pid, plist[i].tty, plist[i].time, plist[i].exename);
-            strncpy(result, tmp, term_width);
+            strncpy(result, tmp, term_width-1);
             printf("%s\n", result); // 각 프로세스 엔트리 출력
         }
     }
     // u옵션이 포함된 경우
     else if(options[1]){
         char tmp[2048], result[2048];
-        sprintf(tmp, "%-8s %7s %5s %5s %6s %6s %-8s %-5s %-6s %5s %s"
+        sprintf(tmp, "%-8s %7s %5s %5s %7s %7s %-8s %-5s %-6s %5s %s"
                 , "USER", "PID", "\%CPU", "%MEM"
                 , "VSZ", "RSS", "TTY", "STAT"
                 , "START", "TIME", "COMMAND");
-        strncpy(result, tmp, term_width);
+        strncpy(result, tmp, term_width-1);
         printf("%s\n", result);
 
         for(int i=0; i<num_of_proc; ++i){
@@ -490,11 +488,11 @@ void print_proclist(){
             if(options[3]){
                 if(!strstr(plist[i].state, "R")) continue;
             }
-            sprintf(tmp, "%-8s %7u %5.1lf %5.1lf %6lu %6lu %-8s %-5s %-6s %5s %s"
+            sprintf(tmp, "%-8s %7u %5.1lf %5.1lf %7lu %7lu %-8s %-5s %-6s %5s %s"
                     , plist[i].username, plist[i].pid, plist[i].cpu_usage, plist[i].mem_usage
                     , plist[i].vsize, plist[i].rss, plist[i].tty, plist[i].state
                     , plist[i].start_time, plist[i].time, plist[i].cmdline);
-            strncpy(result, tmp, term_width);
+            strncpy(result, tmp, term_width-1);
             printf("%s\n", result);
         }
     }
@@ -502,7 +500,7 @@ void print_proclist(){
     else{
         char tmp[2048], result[2048];
         sprintf(tmp, "%7s %-8s %-6s %5s %s", "PID", "TTY", "STAT", "TIME", "COMMAND");
-        strncpy(result, tmp, term_width);
+        strncpy(result, tmp, term_width-1);
         printf("%s\n", result);
 
         for(int i=0; i<num_of_proc; ++i){
@@ -524,7 +522,7 @@ void print_proclist(){
                 if(!strstr(plist[i].state, "R")) continue;
             }
             sprintf(tmp, "%7u %-8s %-6s %5s %s", plist[i].pid, plist[i].tty, plist[i].state, plist[i].time, plist[i].cmdline);
-            strncpy(result, tmp, term_width);
+            strncpy(result, tmp, term_width-1);
             printf("%s\n", result);
         }
     }
