@@ -102,8 +102,34 @@ int main(){
     while(1){
         int ch = getch();
         cur_time = time(NULL); // 현재시간 갱신
-        if(ch=='q' || ch=='Q') break;
-        if(cur_time-prev_time >= 3){ // 3초마다 갱신
+        bool isRefresh = false;
+        if(ch=='q') break;
+        switch(ch){
+            case ' ':
+                isRefresh = true;
+                break;
+            case KEY_UP:
+                isRefresh = true;
+                row--;
+                if(row < 0) row = 0; // 터미널 바깥으로 벗어나면 0으로 고정
+                break;
+            case KEY_DOWN:
+                isRefresh = true;
+                row++;
+                if(row > num_of_proc-1) row = num_of_proc-1; // 프로세스는 항상 1개는 표시
+                break;
+            case KEY_LEFT:
+                isRefresh = true;
+                col -= 8;
+                if(col < 0) col = 0; // 터미널 바깥으로 벗어나면 0으로 고정
+                break;
+            case KEY_RIGHT:
+                isRefresh = true;
+                col += 8;
+                break;
+        }
+        // refresh조건을 만족하거나 3초 지나면 수행
+        if(isRefresh || cur_time-prev_time >= 3){
             clear(); // 화면 클리어
             clear_proclist();
             make_proclist_entry();
@@ -111,7 +137,7 @@ int main(){
             print_summary();
             print_proclist();
             refresh();
-            prev_time = cur_time;
+            prev_time = cur_time; // 현재시간 저장
         }
     }
     endwin(); // curses모드 종료
@@ -647,8 +673,9 @@ void print_proclist(){
             , "\%CPU", "%MEM", "TIME+", "COMMAND");
     strcpy(result, tmp);
     int offset = col; // offset초기값은 col시작 위치
-    if(strlen(result) < offset) offset = strlen(result); // 출력 문자열이 터미널 화면 바깥으로 완전히 나가는 경우 offset고정
-    mvprintw(6, 0, "%s", result+offset);
+    // COMMAND column title은 오른쪽으로 끝까지 이동해도 표시됨
+    if(strlen(result)-9 < offset)  mvprintw(6, 0, "%s", "COMMAND");
+    else mvprintw(6, 0, "%s", result+offset);
     attroff(A_REVERSE); // 색 반전 종료
 
     // Entry 출력 (7행부터)
@@ -661,7 +688,13 @@ void print_proclist(){
                 , plist[i].cpu_usage, plist[i].mem_usage, plist[i].time, plist[i].exename);
         strcpy(result, tmp);
         offset = col;
+        // 더 이상 문자열을 출력하면 안되는 col값에 도달하면 offset을 문자열 길이로 고정
         if(strlen(result) < offset) offset = strlen(result);
+        if(!strcmp(plist[i].state, "R")) attron(A_BOLD); // running process는 bold효과로 출력
         mvprintw(cur_row++, 0, "%s", result+offset);
+        attroff(A_BOLD);
     }
+
+    // 빈 라인 출력 (마지막 행)
+    for(int i=0; i<COLS; ++i) mvprintw(cur_row, i, " ");
 }
