@@ -376,7 +376,7 @@ void calc_start(proc *proc_entry){
     // (프로세스 시작 시간) = (현재시각)-(프로세스 실행 시간)
     unsigned long st_time = proc_entry->st_time;
 	st_time = time(NULL)-(uptime-(st_time/clk_tck)); // 현재시간 - 시스템 부팅 이후 시간 + 프로세스 시작시간
-	struct tm *tms= gmtime(&st_time);
+	struct tm *tms= localtime(&st_time);
 	if((time(NULL)-st_time) < 60*60*24){
         sprintf(proc_entry->start_time, "%02d:%02d", tms->tm_hour, tms->tm_min); // "시:분" 포맷 (24h)
 	}
