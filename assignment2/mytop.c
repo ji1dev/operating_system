@@ -1,3 +1,4 @@
+// gcc -o mytop mytop.c -lncurses
 #include <stdio.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -9,6 +10,8 @@
 #include <math.h>
 #include <time.h>
 #include <utmp.h>
+#include <ncurses.h>
+#include <errno.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
@@ -18,6 +21,7 @@
 #define _GNU_SOURCE
 #define MAX_PROC 8192
 #define BUF_SIZE 1024
+#define toMiB 1000/1.024
 
 typedef struct procinfo{
     pid_t pid;                      // 프로세스 ID
@@ -28,13 +32,12 @@ typedef struct procinfo{
     unsigned long vsz;              // Virtual Memory Size (KiB)
     unsigned long rss;              // Resident Memory Size (KiB)
     unsigned long shm;              // Shared Memory Size (KiB)
-    char tty[16];                   // 터미널 번호
+    char tty[32];                   // 터미널 번호
     char state[8];                  // 상태
-    char priority[4];               // 우선순위 값
+    char priority[8];               // 우선순위 값
     int nice;                       // nice 값
     char time[16];                  // 총 CPU사용시간
     char exename[512];              // 실행 파일
-    char cmdline[1024];             // 명령어 (옵션 하나라도 붙는 경우)
     unsigned long utime;            // time spent in user mode in clock ticks
     unsigned long stime;            // time spent in kernel mode in clock ticks
     unsigned long st_time;          // time when the process started in clock ticks
@@ -46,14 +49,17 @@ uid_t cur_uid;                      // 현재 uid
 char cur_tty[16];                   // 현재 tty
 unsigned long total_mem;            // total physical memory
 unsigned long clk_tck;              // num of clock ticks per second of system
-unsigned long uptime;               // uptime of system in seconds
+unsigned long uptime, prev_uptime;  // uptime of system in seconds
 time_t cur_time, prev_time;         // 현재 시간, 지난 리프레시 시간
+unsigned long prev_cpu_ticks[8];
 
 proc plist[MAX_PROC];
 int num_of_proc;
+int row, col;                       // 출력 기준이 되는 row, col좌표
 
 void init(); // 프로세스 정보 가져오기 전에 필요하거나 미리 설정 가능한 값을 가져오는 함수
 void make_proclist_entry(); // 프로세스의 정보를 파싱 및 가공하는 함수
+void sort_proclist(); // CPU 사용률 순으로 프로세스 리스트를 정렬하는 함수
 void clear_proclist_entry(); // 프로세스 정보를 초기화하는 함수
 void clear_proclist(); // 프로세스 리스트를 초기화하는 함수
 void print_summary(); // 최상단에 시스템 정보를 출력하는 함수
@@ -63,7 +69,7 @@ int get_tty_nr(pid_t pid); // 프로세스의 컨트롤 터미널을 가져오�
 void get_tty(int tty_nr, char tty[16]); // 터미널 정보를 가져오는 함수
 void get_total_mem(); // 물리 메모리 용량을 가져오는 함수
 void get_uptime(); // 시스템의 uptime을 가져오는 함수
-void get_username(); // username 가져오는 함수
+void get_username(uid_t uid, char user[16]); // username 가져오는 함수
 void calc_cpu_usage(char *stat_path, proc *proc_entry); // cpu usage를 계산하는 함수
 void get_msize(char *pid_path, proc *proc_entry); // vsz, rss, shm값을 가져오는 함수
 void calc_mem_usage(unsigned long rss, double *ret); // memory usage를 계산하는 함수
@@ -72,18 +78,40 @@ void get_priority(char *stat_path, proc *proc_entry); // priority, nice를 가�
 void calc_time_use(proc *proc_entry); // CPU 사용시간 계산하는 함수
 void get_command(char *pid_path, proc *proc_entry); // 실행 명령어를 가져오는 함수
 
-unsigned long convert_to_kb(unsigned long kib); // kib -> kb 단위 변환 함수
+int cmp(const void *entry1, const void *entry2);
 
 int main(){
-    init();
+    initscr(); // curse모드를 시작
+    keypad(stdscr, TRUE); // 방향키 등 특수키 입력을 허용
+    noecho(); // 입력된 문자를 화면에 출력하지 않도록 함
+    timeout(50); // read blocks for 50ms delay
+    curs_set(0); // 커서 숨김
 
-    cur_time = time(NULL);
-    
+    init();
     make_proclist_entry();
+    // sort_proclist();
+    cur_time = time(NULL);
+    row = 0;
+    col = 0;
     print_summary();
     print_proclist();
-    clear_proclist();
+    refresh(); // 실제 화면에 출력
 
+    while(1){
+        int ch = getch();
+        cur_time = time(NULL); // 현재시간 갱신
+        if(ch=='q' || ch=='Q') break;
+        if(cur_time-prev_time >= 3){ // 3초마다 갱신
+            clear(); // 화면 클리어
+            clear_proclist();
+            make_proclist_entry();
+            print_summary();
+            print_proclist();
+            refresh(); // 실제 화면에 출력
+            prev_time = cur_time;
+        }
+    }
+    endwin(); // curses모드 종료
     return 0;
 }
 
@@ -102,7 +130,6 @@ void make_proclist_entry(){
     char *dirname = "/proc/";
     DIR *dp = opendir(dirname); // open proc dir
     while((d = readdir(dp)) != NULL){ // 디렉토리의 각 엔트리를 확인
-        char pid_path[64];
         bool isProc = true;
         int name_len = strlen(d->d_name);
         pid_t p_pid;
@@ -113,6 +140,9 @@ void make_proclist_entry(){
             }
         }
         if(!isProc) continue; // 프로세스 파일이 아니면 다음 엔트리로 넘어감
+
+        // pid 디렉토리 여부 확인
+        char pid_path[64];
         strcpy(pid_path, dirname);
         strcat(pid_path, d->d_name); // 프로세스 파일의 절대 경로
         sscanf(d->d_name, "%u", &p_pid); // pid 정수로 추출
@@ -121,17 +151,32 @@ void make_proclist_entry(){
         stat(pid_path, &stat_buf); // <pid>파일의 stat 구조체 가져옴
         if(!S_ISDIR(stat_buf.st_mode)) continue; // 파일이 directory가 아니면 넘어감
 
-        proc proc_entry; // 프로세스 리스트 엔트리 생성
-        clear_proclist_entry(&proc_entry); // 구조체 멤버 초기화
+        if(access(pid_path, R_OK) < 0){
+            fprintf(stderr, "%s\n", strerror(errno));
+            continue;
+        }
+
+        // 파일 접근 권한 확인
+        FILE *fp;
+        char stat_path[64];
+        strcpy(stat_path, pid_path);
+        strcat(stat_path, "/stat");
+        if(access(stat_path, R_OK) < 0){
+            fprintf(stderr, "%s\n", strerror(errno));
+            continue;
+        }
+        if((fp=fopen(stat_path, "r")) == NULL){ // open stat file
+            fprintf(stderr, "%s\n", strerror(errno));
+            continue;
+        }
+
+        // 프로세스 리스트 엔트리 생성 및 초기화
+        proc proc_entry; 
+        clear_proclist_entry(&proc_entry);
         
         // pid, uid 저장
         proc_entry.pid = p_pid;
         proc_entry.uid = stat_buf.st_uid;
-        
-        char stat_path[64];
-        strcpy(stat_path, pid_path);
-        strcat(stat_path, "/stat");
-        FILE *fp = fopen(stat_path, "r"); // open stat file
 
         // username 저장
         get_username(proc_entry.uid, proc_entry.username);
@@ -162,15 +207,24 @@ void make_proclist_entry(){
 
         memcpy(&plist[num_of_proc], &proc_entry, sizeof(proc));
         num_of_proc++;
+        fclose(fp);
     }
     closedir(dp);
+}
+
+void sort_proclist(){
+    // CPU Usage 기준 내림차순 정렬
+}
+
+int cmp(const void *entry1, const void *entry2){
+    // qsort compare 함수
 }
 
 int get_tty_nr(pid_t pid){
     // tty_nr: controlling terminal of the process -> /proc/[pid]/stat의 7번째 토큰
     char path[64], buf[BUF_SIZE];
     sprintf(path, "%s%d%s", "/proc/", (int)pid, "/stat"); // stat 파일 경로 완성
-    FILE *fp = fopen(path, "r"); // open stat file
+    FILE *fp=fopen(path, "r"); // open stat filea
     fgets(buf, BUF_SIZE, fp);
     char *ptr = strtok(buf, " ");
     int cnt = 1;
@@ -207,7 +261,7 @@ void get_total_mem(){
     char *ptr = buf;
     while(!isdigit(*ptr)) ptr++; // 값 나올때까지 ptr이동
     sscanf(ptr, "%lu", &tmp); // 숫자만 추출
-    total_mem = convert_to_kb(tmp); // KiB단위를 kB단위로 변환
+    total_mem = tmp;
     fclose(fp);
 }
 
@@ -222,9 +276,13 @@ void get_uptime(){
     fclose(fp);
 }
 
-void get_username(uid_t uid, char user[32]){
+void get_username(uid_t uid, char user[16]){
     char tmp[32];
-    struct passwd *pw = getpwuid(uid);
+    struct passwd *pw;
+    if((pw = getpwuid(uid)) == NULL){
+        fprintf(stderr, "%s\n", strerror(errno));
+        exit(-1);
+    }
     strcpy(tmp, pw->pw_name); // passwd 파일에서 username 추출
     int user_len = strlen(tmp);
     if(user_len > 8) tmp[7] = '+'; // username이 8자리 이상이면 '+'기호로 ellipsis
@@ -234,11 +292,9 @@ void get_username(uid_t uid, char user[32]){
 void calc_cpu_usage(char *stat_path, proc *proc_entry){
     double elapsed_time; // total elapsed time since process started in seconds
     double usage;
-
     char buf[BUF_SIZE];
     FILE *fp = fopen(stat_path, "r"); // open stat file
     fgets(buf, BUF_SIZE, fp);
-
     char *ptr = strtok(buf, " ");
     int cnt = 0;
     while(cnt++ < 22){ // stat 파일에서 14, 15, 22번째 토큰 추출
@@ -316,6 +372,7 @@ void calc_mem_usage(unsigned long rss, double *ret){
 }
 
 void get_state(char *pid_path, pid_t pid, char state[8]){
+    // RSDZTW: 기본 state -> stat 3번째 토큰
     char buf[BUF_SIZE], tmp_path[64];
     strcpy(tmp_path, pid_path);
     strcat(tmp_path, "/stat");
@@ -323,7 +380,7 @@ void get_state(char *pid_path, pid_t pid, char state[8]){
     fgets(buf, BUF_SIZE, fp);
     char *ptr = strtok(buf, " ");
     int cnt = 0;
-    while(cnt++ < 2) ptr = strtok(NULL, " ");
+    while(cnt++ < 2) ptr = strtok(NULL, " "); 
     strcpy(state, ptr);
     fclose(fp);
 }
@@ -376,41 +433,23 @@ void get_command(char *pid_path, proc *proc_entry){
     while(cnt++ < 1) ptr = strtok(NULL, ")"); // stat 파일에서 2번째 토큰 추출
     strcpy(proc_entry->exename, ptr);
     fclose(fp);
-
-    // 명령줄 인자 파싱
-    strcpy(tmp_path, pid_path);
-    strcat(tmp_path, "/cmdline");
-    fp = fopen(tmp_path, "r"); // open cmdline file
-   
-    char *arg = 0;
-    size_t size = 1;
-    while(getdelim(&arg, &size, 0, fp) != -1){ // delimiter로 끊어서 읽음
-        strcat(proc_entry->cmdline, arg);
-        strcat(proc_entry->cmdline, " "); // 인자 구분을 위한 space 추가 
-    }
-
-    // 인자가 없는 경우 [exename]으로 저장
-    if(strlen(proc_entry->cmdline) == 0){
-        sprintf(proc_entry->cmdline, "[%s]", proc_entry->exename);
-    }
 }
 
 void clear_proclist_entry(proc *proc_entry){
-    memset(proc_entry->username, '\0', 16);
-    proc_entry->uid = 0;
     proc_entry->pid = 0;
-    proc_entry->cpu_usage = 0;
-    proc_entry->mem_usage = 0;
+    proc_entry->uid = 0;
+    memset(proc_entry->username, '\0', 16);
+    proc_entry->cpu_usage = 0.0;
+    proc_entry->mem_usage = 0.0;
     proc_entry->vsz = 0;
     proc_entry->rss = 0;
     proc_entry->shm = 0;
-    memset(proc_entry->tty, '\0', 16);
+    memset(proc_entry->tty, '\0', 32);
     memset(proc_entry->state, '\0', 8);
-    memset(proc_entry->state, '\0', 4);
+    memset(proc_entry->priority, '\0', 8);
     proc_entry->nice = 0;
     memset(proc_entry->time, '\0', 16);
-    memset(proc_entry->exename, '\0', 1024);
-    memset(proc_entry->cmdline, '\0', 1024);
+    memset(proc_entry->exename, '\0', 512);
     proc_entry->utime = 0;
     proc_entry->stime = 0;
     proc_entry->st_time = 0;
@@ -424,19 +463,11 @@ void clear_proclist(){
     num_of_proc = 0;
 }
 
-/*
-top - 00:09:09 up 1 day, 11:45,  3 users,  load average: 0.01, 0.06, 0.08
-Tasks: 210 total,   1 running, 209 sleeping,   0 stopped,   0 zombie
-%Cpu(s):  0.5 us,  0.7 sy,  0.0 ni, 98.7 id,  0.0 wa,  0.0 hi,  0.2 si,  0.0 st
-MiB Mem :   3932.8 total,    794.3 free,    863.2 used,   2275.3 buff/cache
-MiB Swap:   2048.0 total,   2048.0 free,      0.0 used.   2811.8 avail Mem 
-*/
 void print_summary(){
     // Current time
     char curtime_s[32];
     struct tm *tms= localtime(&cur_time);
     sprintf(curtime_s, "top - %02d:%02d:%02d ", tms->tm_hour, tms->tm_min, tms->tm_sec);
-    printf("%s ", curtime_s);
 
     // Uptime
     char uptime_s[32];
@@ -447,7 +478,6 @@ void print_summary(){
         if(tms->tm_yday > 1) sprintf(uptime_s, "up%2d day, %02d:%02d, ", tms->tm_yday, tms->tm_hour, tms->tm_min);
         else sprintf(uptime_s, "up%2d days, %02d:%02d, ", tms->tm_yday, tms->tm_hour, tms->tm_min);
     }
-    printf("%s ", uptime_s);
 
     // Num of users
     int active_users = 0;
@@ -458,9 +488,8 @@ void print_summary(){
         if((uts->ut_type == USER_PROCESS) && strlen(uts->ut_user)) active_users++;
     }
     if(active_users > 1) sprintf(active_s, "%d users, ", active_users);
-    else sprintf(active_s, "%d user, ", active_users); 
+    else sprintf(active_s, "%d user, ", active_users);
     endutent();
-    printf("%s ", active_s);
 
     // Load average
     char loadavg_s[32], buf[BUF_SIZE];
@@ -475,41 +504,152 @@ void print_summary(){
         ptr = strtok(NULL, " ");
     }
     fclose(fp);
-    printf("%s\n", loadavg_s);
+    mvprintw(0, 0, "%s %s %s %s", curtime_s, uptime_s, active_s, loadavg_s); // 0행 0열로 커서 이동 후 출력
 
     // Tasks (running, sleeping, stopped, zombie)
+    char task_s[128];
+	int running = 0, sleeping = 0, stopped = 0, zombie = 0;
+	for(int i=0; i<num_of_proc; ++i){
+		if(!strcmp(plist[i].state, "R")) running++;
+		else if(!strcmp(plist[i].state, "S")) sleeping++;
+		else if(!strcmp(plist[i].state, "I")) sleeping++;
+		else if(!strcmp(plist[i].state, "T")) stopped++;
+		else if(!strcmp(plist[i].state, "Z")) zombie++;
+	}
+    sprintf(task_s, "Tasks: %4d total, %4d running, %4d sleeping, %4d stopped, %4d zombie"
+            ,num_of_proc, running, sleeping, stopped, zombie);
+    mvprintw(1, 0, "%s", task_s);
 
     // CPU states (user, sys, nice, idle, IO-wait, hw/sw interrupt, stolen by hyperviser)
+    // based on the interval since the last refresh
+    double cpu_ticks[8], cpu_sec[8]; // us, ni, sy, id, wa, hi, si, st 순서대로
+    char cpu_s[128];
+    fp = fopen("/proc/stat", "r");
+    fgets(buf, BUF_SIZE, fp);
+    char *ptr_cpu = buf;
+    while(!isdigit(*ptr_cpu)) ptr_cpu++; // 값 나올때까지 ptr이동
+	sscanf(ptr_cpu, "%lf %lf %lf %lf %lf %lf %lf %lf"
+            ,&cpu_ticks[0], &cpu_ticks[1], &cpu_ticks[2], &cpu_ticks[3]
+            ,&cpu_ticks[4], &cpu_ticks[5], &cpu_ticks[6], &cpu_ticks[7]);
+
+    unsigned long time_tick = 0, cur_uptime = 0;
+    for(int i=0; i<8; ++i) cur_uptime += cpu_ticks[i]; // 헤더 뿌려주는 부분에서만 사용하는 uptime (/proc/stat값의 총합)
+
+    if(prev_uptime == 0){ // 처음 값을 뿌려주는 경우
+        time_tick = cur_uptime; // 시스템 uptime기준 tick으로 변환
+        for(int i=0; i<8; ++i){
+            cpu_sec[i] = cpu_ticks[i]; // 최초 저장하는 값은 파싱해온 값 그대로를 사용
+        }
+    }
+    else{ // 프로그램 실행 중 리프레시 발생한 경우
+        time_tick = (cur_uptime-prev_uptime); 
+        for(int i=0; i<8; ++i){ // 누적값이므로 이전값만큼 빼고 계산함
+            cpu_sec[i] = cpu_ticks[i]-prev_cpu_ticks[i];
+        }
+    }
+
+    for(int i=0; i<8; ++i){
+		cpu_sec[i] = (cpu_sec[i]/time_tick)*100;
+        if(cpu_sec[i]<0 || cpu_sec[i]>100 || isnan(cpu_sec[i]) || isinf(cpu_sec[i])) cpu_sec[i] = 0; // 표현할 수 없는 값 예외처리	
+	}
+
+    sprintf(cpu_s, "%%Cpu(s): %4.1lf us, %4.1lf sy, %4.1lf ni, %4.1lf id, %4.1lf wa, %4.1lf hi, %4.1lf si, %4.1lf st"
+            , cpu_sec[0], cpu_sec[2], cpu_sec[1], cpu_sec[3]
+            , cpu_sec[4], cpu_sec[5], cpu_sec[6], cpu_sec[7]);
+    mvprintw(2, 0, "%s", cpu_s);
+    
+    prev_uptime = cur_uptime; // 이전 uptime, cpu ticks값 저장
+    for(int i=0; i<8; ++i) prev_cpu_ticks[i] = cpu_ticks[i];
+    fclose(fp);
 
     // Memory usage (Physical and Virtual memory)
-
+    char mem_s[2][1024];
+    unsigned long memfree, memavail, buffers, cached, swaptotal, swapfree, srec, mem_used, swap_used, bufcache;
+    memset(buf, '\0', BUF_SIZE);
+    fp = fopen("/proc/meminfo", "r");
+    cnt = 0;
+    while(cnt++ < 24){
+        char *ptr_m;
+        fgets(buf, BUF_SIZE, fp);
+        switch(cnt){
+            case 2: // mem free
+                ptr_m = buf;
+                while(!isdigit(*ptr_m)) ptr_m++;
+                sscanf(ptr_m, "%lu", &memfree);
+                break;
+            case 3: // mem available
+                ptr_m = buf;
+                while(!isdigit(*ptr_m)) ptr_m++;
+                sscanf(ptr_m, "%lu", &memavail);
+                break;
+            case 4: // buffers
+                ptr_m = buf;
+                while(!isdigit(*ptr_m)) ptr_m++;
+                sscanf(ptr_m, "%lu", &buffers);
+                break;
+            case 5: // cached
+                ptr_m = buf;
+                while(!isdigit(*ptr_m)) ptr_m++;
+                sscanf(ptr_m, "%lu", &cached);
+                break;
+            case 15: // swap total
+                ptr_m = buf;
+                while(!isdigit(*ptr_m)) ptr_m++;
+                sscanf(ptr_m, "%lu", &swaptotal);
+                break;
+            case 16: // swap free
+                ptr_m = buf;
+                while(!isdigit(*ptr_m)) ptr_m++;
+                sscanf(ptr_m, "%lu", &swapfree);
+                break;
+            case 24: // sreclaimable
+                ptr_m = buf;
+                while(!isdigit(*ptr_m)) ptr_m++;
+                sscanf(ptr_m, "%lu", &srec);
+                break;  
+        }     
+    }
+    mem_used = total_mem-memfree-buffers-cached-srec;
+    swap_used = swaptotal-swapfree;
+    bufcache = buffers+cached+srec;
+    sprintf(mem_s[0], "MiB Mem : %8.1lf total, %8.1lf free, %8.1lf used, %8.1lf buff/cache\n"
+            ,(double)total_mem/toMiB, (double)memfree/toMiB, (double)mem_used/toMiB, (double)bufcache/toMiB); // MiB단위로 변환해서 저장
+    sprintf(mem_s[1], "MiB Swap: %8.1lf total, %8.1lf free, %8.1lf used, %8.1lf avail Mem\n"
+            ,(double)swaptotal/toMiB, (double)swapfree/toMiB, (double)swap_used/toMiB, (double)memavail/toMiB);
+    mvprintw(3, 0, "%s", mem_s[0]);
+    mvprintw(4, 0, "%s", mem_s[1]);
+    fclose(fp);
 }
 
 void print_proclist(){
-    // 터미널 창의 크기를 가져옴
-    struct winsize term;
-    ioctl(STDOUT_FILENO, TIOCGWINSZ, &term);
-    int term_width = term.ws_col;
+    // 빈 라인 출력 (5행)
+    for(int i=0; i<COLS; ++i) mvprintw(5, i, " ");
 
+    // Title 출력 (6행)
     char tmp[2048], result[2048];
+    attron(A_REVERSE); // 색 반전
+    for(int i=0; i<COLS; ++i) mvprintw(6, i, " "); // 6행 전체를 빈 문자로 채움
     sprintf(tmp, "%7s %-8s %3s %3s %7s %7s %7s %s %5s %5s %9s %s"
             , "PID", "USER", "PR", "NI"
             , "VIRT", "RES", "SHR", "S"
             , "\%CPU", "%MEM", "TIME+", "COMMAND");
+    strcpy(result, tmp);
+    int offset = col; // offset초기값은 col시작 위치
+    if(strlen(result) < offset) offset = strlen(result); // 출력 문자열이 터미널 화면 바깥으로 완전히 나가는 경우 offset고정
+    mvprintw(6, 0, "%s", result+offset);
+    attroff(A_REVERSE); // 색 반전 종료
 
-    strncpy(result, tmp, term_width-1);
-    printf("%s\n", result);
-
-    for(int i=0; i<num_of_proc; ++i){
+    // Entry 출력 (7행부터)
+    int cur_row = 7;
+    for(int i=row; i<num_of_proc; ++i){
+        if(cur_row > LINES) break; // 한 행씩 내려가며 출력, 높이 초과하면 출력 중지
         sprintf(tmp, "%7u %-8s %3s %3d %7lu %7lu %7lu %s %5.1lf %5.1lf %9s %s"
                 , plist[i].pid, plist[i].username, plist[i].priority, plist[i].nice
                 , plist[i].vsz, plist[i].rss, plist[i].shm, plist[i].state
                 , plist[i].cpu_usage, plist[i].mem_usage, plist[i].time, plist[i].exename);
-        strncpy(result, tmp, term_width-1);
-        printf("%s\n", result);
+        strcpy(result, tmp);
+        offset = col;
+        if(strlen(result) < offset) offset = strlen(result);
+        mvprintw(cur_row++, 0, "%s", result+offset);
     }
-}
-
-unsigned long convert_to_kb(unsigned long kib){
-    return kib*1024/1000; // 1.024를 곱함
 }
