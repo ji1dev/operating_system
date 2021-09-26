@@ -30,9 +30,8 @@ typedef struct procinfo{
     unsigned long shm;              // Shared Memory Size (KiB)
     char tty[16];                   // 터미널 번호
     char state[8];                  // 상태
-    int priority;                   // 우선순위 값
+    char priority[4];               // 우선순위 값
     int nice;                       // nice 값
-    char start_time[16];            // 시작시간
     char time[16];                  // 총 CPU사용시간
     char exename[512];              // 실행 파일
     char cmdline[1024];             // 명령어 (옵션 하나라도 붙는 경우)
@@ -69,7 +68,7 @@ void calc_cpu_usage(char *stat_path, proc *proc_entry); // cpu usage를 계산�
 void get_msize(char *pid_path, proc *proc_entry); // vsz, rss, shm값을 가져오는 함수
 void calc_mem_usage(unsigned long rss, double *ret); // memory usage를 계산하는 함수
 void get_state(char *pid_path, pid_t pid, char state[8]); // state를 가져오는 함수
-void calc_start(proc *proc_entry); // 시작시간을 계산하는 함수
+void get_priority(char *stat_path, proc *proc_entry); // priority, nice를 가져오는 함수
 void calc_time_use(proc *proc_entry); // CPU 사용시간 계산하는 함수
 void get_command(char *pid_path, proc *proc_entry); // 실행 명령어를 가져오는 함수
 
@@ -152,8 +151,8 @@ void make_proclist_entry(){
         // state 저장
         get_state(pid_path, proc_entry.pid, proc_entry.state);
 
-        // start_time 저장
-        calc_start(&proc_entry);
+        // priority, nice 저장
+        get_priority(stat_path, &proc_entry);
         
         // time 저장
         calc_time_use(&proc_entry);
@@ -277,12 +276,10 @@ void get_msize(char *pid_path, proc *proc_entry){
         cnt++;
     }
     if(strstr(buf, "RssFile")){ // RssFile 항목이 있는 프로세스는 값 갱신
-        printf("%s", buf);
         char *ptr = strtok(buf, " ");
         cnt = 0;
         while(cnt++ < 1) ptr = strtok(NULL, " ");
         proc_entry->shm = atoi(ptr);
-        printf("%s\n", ptr);
     }
     fclose(fp);
 
@@ -331,28 +328,40 @@ void get_state(char *pid_path, pid_t pid, char state[8]){
     fclose(fp);
 }
 
-void calc_start(proc *proc_entry){
-    // 시간을 계산하고, 하루, 1주, 나머지 경우로 나눠서 각각 다른 포맷의 문자열로 변환
-    // (프로세스 시작 시간) = (현재시각)-(프로세스 실행 시간)
-    unsigned long st_time = proc_entry->st_time;
-	st_time = time(NULL)-(uptime-(st_time/clk_tck)); // 현재시간 - 시스템 부팅 이후 시간 + 프로세스 시작시간
-	struct tm *tms= localtime(&st_time);
-	if((time(NULL)-st_time) < 60*60*24){
-        sprintf(proc_entry->start_time, "%02d:%02d", tms->tm_hour, tms->tm_min); // "시:분" 포맷 (24h)
-	}
-	else if((time(NULL)-st_time) < 60*60*24*7){
-		strftime(proc_entry->start_time, 8, "%b %d", tms); // "월 일" 포맷
-	}
-	else{
-		strftime(proc_entry->start_time, 8, "%y", tms); // "연도 끝 두자리" 포맷
-	}
+void get_priority(char *stat_path, proc *proc_entry){
+    char buf[BUF_SIZE];
+    FILE *fp = fopen(stat_path, "r"); // open stat file
+    fgets(buf, BUF_SIZE, fp);
+    char *ptr = strtok(buf, " ");
+    int cnt = 0;
+    while(cnt++ < 19){ // stat 파일에서 18, 19번째 토큰
+        switch(cnt){
+            case 18:
+                sscanf(ptr, "%s", proc_entry->priority);
+                // PR값 -100이면 최고 우선순위인 realtime process -> "rt"로 표기
+                if(!strcmp(proc_entry->priority, "-100")){
+                    strcpy(proc_entry->priority, "rt");
+                }
+                break;
+            case 19:
+                sscanf(ptr, "%d", &proc_entry->nice);
+                break;
+        }
+        ptr = strtok(NULL, " ");
+    }
+    fclose(fp);
 }
 
 void calc_time_use(proc *proc_entry){
     // Reflecting more granularity through hundredths of a second (centisecond)
+    // (utime+ctime)*100/clk_tck = total time in centisec
     unsigned long tt_time = proc_entry->total_time/clk_tck;
-	struct tm *tms= gmtime(&tt_time); // GMT+9 보정 안되도록 gmtime사용
-    //sprintf(proc_entry->time, "%02d:%02d:%02d", tms->tm_hour, tms->tm_min, tms->tm_sec);
+    int csec_part = proc_entry->total_time*100/clk_tck%100; 
+	struct tm *tms = gmtime(&tt_time); // GMT+9 보정 안되도록 gmtime사용
+
+    // 999분 넘어가면 centisec 필드 제외
+    if(tms->tm_min > 999) sprintf(proc_entry->time, "%d:%02d", tms->tm_min, tms->tm_sec);
+    else sprintf(proc_entry->time, "%d:%02d.%02d", tms->tm_min, tms->tm_sec, csec_part); 
 }
 
 void get_command(char *pid_path, proc *proc_entry){
@@ -397,9 +406,8 @@ void clear_proclist_entry(proc *proc_entry){
     proc_entry->shm = 0;
     memset(proc_entry->tty, '\0', 16);
     memset(proc_entry->state, '\0', 8);
-    proc_entry->priority = 0;
+    memset(proc_entry->state, '\0', 4);
     proc_entry->nice = 0;
-    memset(proc_entry->start_time, '\0', 16);
     memset(proc_entry->time, '\0', 16);
     memset(proc_entry->exename, '\0', 1024);
     memset(proc_entry->cmdline, '\0', 1024);
@@ -493,7 +501,7 @@ void print_proclist(){
     printf("%s\n", result);
 
     for(int i=0; i<num_of_proc; ++i){
-        sprintf(tmp, "%7u %-8s %3d %3d %7lu %7lu %7lu %s %5.1lf %5.1lf %9s %s"
+        sprintf(tmp, "%7u %-8s %3s %3d %7lu %7lu %7lu %s %5.1lf %5.1lf %9s %s"
                 , plist[i].pid, plist[i].username, plist[i].priority, plist[i].nice
                 , plist[i].vsz, plist[i].rss, plist[i].shm, plist[i].state
                 , plist[i].cpu_usage, plist[i].mem_usage, plist[i].time, plist[i].exename);
