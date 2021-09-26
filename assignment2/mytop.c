@@ -39,6 +39,7 @@ typedef struct procinfo{
     int nice;                           // nice 값
     char time[16];                      // 총 CPU사용시간
     char exename[512];                  // 실행 파일
+    char cmdline[1024];                 // 명령줄 인자
     unsigned long utime;                // time spent in user mode in clock ticks
     unsigned long stime;                // time spent in kernel mode in clock ticks
     unsigned long st_time;              // time when the process started in clock ticks
@@ -58,6 +59,9 @@ unsigned long prev_cpu_time[MAX_PID];   // previous total time spent for process
 proc plist[MAX_PROC];
 int num_of_proc;
 int row, col;                           // 출력 기준이 되는 row, col좌표
+double refresh_delay = 3.0;             // 기본 refresh delay값
+bool toggleCMD = false;                 // cmdname과 line 토글
+int sort_option = 0;                   // 정렬 기준 (0: %CPU, 1: %MEM, 2: TIME+)
 
 void init(); // 프로세스 정보 가져오기 전에 필요하거나 미리 설정 가능한 값을 가져오는 함수
 void make_proclist_entry(); // 프로세스의 정보를 파싱 및 가공하는 함수
@@ -80,7 +84,9 @@ void get_priority(char *stat_path, proc *proc_entry); // priority, nice를 가�
 void calc_time_use(proc *proc_entry); // CPU 사용시간 계산하는 함수
 void get_command(char *pid_path, proc *proc_entry); // 실행 명령어를 가져오는 함수
 
-int cmp(const void *p1, const void *p2);
+int cmp0(const void *p1, const void *p2);
+int cmp1(const void *p1, const void *p2);
+int cmp2(const void *p1, const void *p2);
 
 int main(){
     initscr(); // curse모드를 시작
@@ -103,10 +109,27 @@ int main(){
         int ch = getch();
         cur_time = time(NULL); // 현재시간 갱신
         bool isRefresh = false;
+        char str[32];
         if(ch=='q') break;
-        switch(ch){
-            case ' ':
+        switch(ch){ // interactive commands
+            case ' ': // refresh all
                 isRefresh = true;
+                break;
+            case 'c': // toggle command name and line
+                isRefresh = true;
+                toggleCMD = toggleCMD ? false : true;
+                break;
+            case 'P': // cpu usage로 정렬
+                isRefresh = true;
+                sort_option = 0;
+                break;
+            case 'M': // mem usage로 정렬
+                isRefresh = true;
+                sort_option = 1;
+                break;
+            case 'T': // total time으로 정렬
+                isRefresh = true;
+                sort_option = 2;
                 break;
             case KEY_UP:
                 isRefresh = true;
@@ -242,11 +265,9 @@ void make_proclist_entry(){
 }
 
 void sort_proclist(){
-    qsort(plist, num_of_proc, sizeof(plist[0]), cmp);
-}
-
-int cmp(const void *p1, const void *p2){
-    return ((proc *)p1)->cpu_usage < ((proc *)p2)->cpu_usage;
+    if(sort_option == 0) qsort(plist, num_of_proc, sizeof(plist[0]), cmp0);
+    else if(sort_option == 1) qsort(plist, num_of_proc, sizeof(plist[0]), cmp1);
+    else qsort(plist, num_of_proc, sizeof(plist[0]), cmp2);
 }
 
 int get_tty_nr(pid_t pid){
@@ -471,6 +492,23 @@ void get_command(char *pid_path, proc *proc_entry){
     while(cnt++ < 1) ptr = strtok(NULL, ")"); // stat 파일에서 2번째 토큰 추출
     strcpy(proc_entry->exename, ptr);
     fclose(fp);
+
+    // 명령줄 인자 파싱
+    strcpy(tmp_path, pid_path);
+    strcat(tmp_path, "/cmdline");
+    fp = fopen(tmp_path, "r");
+    char *arg = 0;
+    size_t size = 1;
+    while(getdelim(&arg, &size, 0, fp) != -1){ // delimiter로 끊어서 읽음
+        strcat(proc_entry->cmdline, arg);
+        strcat(proc_entry->cmdline, " "); // 인자 구분을 위한 space 추가 
+    }
+
+    // 인자가 없는 경우 [exename]으로 저장
+    if(strlen(proc_entry->cmdline) == 0){
+        sprintf(proc_entry->cmdline, "[%s]", proc_entry->exename);
+    }
+    fclose(fp);
 }
 
 void clear_proclist_entry(proc *proc_entry){
@@ -488,6 +526,7 @@ void clear_proclist_entry(proc *proc_entry){
     proc_entry->nice = 0;
     memset(proc_entry->time, '\0', 16);
     memset(proc_entry->exename, '\0', 512);
+    memset(proc_entry->cmdline, '\0', 1024);
     proc_entry->utime = 0;
     proc_entry->stime = 0;
     proc_entry->st_time = 0;
@@ -682,10 +721,18 @@ void print_proclist(){
     int cur_row = 7;
     for(int i=row; i<num_of_proc; ++i){
         if(cur_row > LINES) break; // 한 행씩 내려가며 출력, 높이 초과하면 출력 중지
-        sprintf(tmp, "%7u %-8s %3s %3d %7lu %7lu %7lu %s %5.1Lf %5.1Lf %9s %s"
+        if(toggleCMD){ // cmd toggle true이면 cmdline 출력, 아니면 name 출력
+            sprintf(tmp, "%7u %-8s %3s %3d %7lu %7lu %7lu %s %5.1Lf %5.1Lf %9s %s"
+                , plist[i].pid, plist[i].username, plist[i].priority, plist[i].nice
+                , plist[i].vsz, plist[i].rss, plist[i].shm, plist[i].state
+                , plist[i].cpu_usage, plist[i].mem_usage, plist[i].time, plist[i].cmdline);
+        }
+        else{
+            sprintf(tmp, "%7u %-8s %3s %3d %7lu %7lu %7lu %s %5.1Lf %5.1Lf %9s %s"
                 , plist[i].pid, plist[i].username, plist[i].priority, plist[i].nice
                 , plist[i].vsz, plist[i].rss, plist[i].shm, plist[i].state
                 , plist[i].cpu_usage, plist[i].mem_usage, plist[i].time, plist[i].exename);
+        }
         strcpy(result, tmp);
         offset = col;
         // 더 이상 문자열을 출력하면 안되는 col값에 도달하면 offset을 문자열 길이로 고정
@@ -697,4 +744,16 @@ void print_proclist(){
 
     // 빈 라인 출력 (마지막 행)
     for(int i=0; i<COLS; ++i) mvprintw(cur_row, i, " ");
+}
+
+int cmp0(const void *p1, const void *p2){
+    return ((proc *)p1)->cpu_usage < ((proc *)p2)->cpu_usage;
+}
+
+int cmp1(const void *p1, const void *p2){
+    return ((proc *)p1)->mem_usage < ((proc *)p2)->mem_usage;
+}
+
+int cmp2(const void *p1, const void *p2){
+    return ((proc *)p1)->total_time < ((proc *)p2)->total_time;
 }
