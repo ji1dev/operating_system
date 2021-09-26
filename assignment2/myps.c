@@ -67,8 +67,6 @@ void calc_start(proc *proc_entry); // 시작시간을 계산하는 함수
 void calc_time_use(proc *proc_entry); // CPU 사용시간 계산하는 함수
 void get_command(char *pid_path, proc *proc_entry); // 실행 명령어를 가져오는 함수
 
-unsigned long convert_to_kb(unsigned long kib); // kib -> kb 단위 변환 함수
-
 int main(int argc, char *argv[]){
     for(int i=1; i<argc; ++i){ // get options from argument
         for(int j=0; j<strlen(argv[i]); ++j){
@@ -173,6 +171,7 @@ void make_proclist_entry(){
 
         memcpy(&plist[num_of_proc], &proc_entry, sizeof(proc));
         num_of_proc++;
+        fclose(fp);
     }
     closedir(dp);
 }
@@ -218,7 +217,7 @@ void get_total_mem(){
     char *ptr = buf;
     while(!isdigit(*ptr)) ptr++; // 값 나올때까지 ptr이동
     sscanf(ptr, "%lu", &tmp); // 숫자만 추출
-    total_mem = convert_to_kb(tmp); // KiB단위를 kB단위로 변환
+    total_mem = tmp; // kB
     fclose(fp);
 }
 
@@ -443,7 +442,7 @@ void clear_proclist_entry(proc *proc_entry){
     memset(proc_entry->state, '\0', 8);
     memset(proc_entry->start_time, '\0', 16);
     memset(proc_entry->time, '\0', 16);
-    memset(proc_entry->exename, '\0', 1024);
+    memset(proc_entry->exename, '\0', 512);
     memset(proc_entry->cmdline, '\0', 1024);
     proc_entry->utime = 0;
     proc_entry->stime = 0;
@@ -526,8 +525,4 @@ void print_proclist(){
             printf("%s\n", result);
         }
     }
-}
-
-unsigned long convert_to_kb(unsigned long kib){
-    return kib*1024/1000; // 1.024를 곱함
 }
