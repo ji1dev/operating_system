@@ -20,42 +20,44 @@
 #define _BSD_SOURCE
 #define _GNU_SOURCE
 #define MAX_PROC 8192
+#define MAX_PID 32768
 #define BUF_SIZE 1024
 #define toMiB 1000/1.024
 
 typedef struct procinfo{
-    pid_t pid;                      // 프로세스 ID
-    uid_t uid;                      // UID
-    char username[16];              // 사용자명
-    double cpu_usage;               // cpu점유율
-    double mem_usage;               // 메모리 점유율
-    unsigned long vsz;              // Virtual Memory Size (KiB)
-    unsigned long rss;              // Resident Memory Size (KiB)
-    unsigned long shm;              // Shared Memory Size (KiB)
-    char tty[32];                   // 터미널 번호
-    char state[8];                  // 상태
-    char priority[8];               // 우선순위 값
-    int nice;                       // nice 값
-    char time[16];                  // 총 CPU사용시간
-    char exename[512];              // 실행 파일
-    unsigned long utime;            // time spent in user mode in clock ticks
-    unsigned long stime;            // time spent in kernel mode in clock ticks
-    unsigned long st_time;          // time when the process started in clock ticks
-    unsigned long long total_time;  // total time spent for process in seconds
+    pid_t pid;                          // 프로세스 ID
+    uid_t uid;                          // UID
+    char username[16];                  // 사용자명
+    long double cpu_usage;              // cpu점유율
+    long double mem_usage;              // 메모리 점유율
+    unsigned long vsz;                  // Virtual Memory Size (KiB)
+    unsigned long rss;                  // Resident Memory Size (KiB)
+    unsigned long shm;                  // Shared Memory Size (KiB)
+    char tty[32];                       // 터미널 번호
+    char state[8];                      // 상태
+    char priority[8];                   // 우선순위 값
+    int nice;                           // nice 값
+    char time[16];                      // 총 CPU사용시간
+    char exename[512];                  // 실행 파일
+    unsigned long utime;                // time spent in user mode in clock ticks
+    unsigned long stime;                // time spent in kernel mode in clock ticks
+    unsigned long st_time;              // time when the process started in clock ticks
+    unsigned long long total_time;      // total time spent for process
 } proc;
 
-pid_t cur_pid;                      // 현재 pid
-uid_t cur_uid;                      // 현재 uid
-char cur_tty[16];                   // 현재 tty
-unsigned long total_mem;            // total physical memory
-unsigned long clk_tck;              // num of clock ticks per second of system
-unsigned long uptime, prev_uptime;  // uptime of system in seconds
-time_t cur_time, prev_time;         // 현재 시간, 지난 리프레시 시간
-unsigned long prev_cpu_ticks[8];
+pid_t cur_pid;                          // 현재 pid
+uid_t cur_uid;                          // 현재 uid
+char cur_tty[16];                       // 현재 tty
+time_t cur_time, prev_time;             // 현재 시간, 지난 리프레시 시간
+unsigned long total_mem;                // total physical memory
+unsigned long clk_tck;                  // num of clock ticks per second of system
+unsigned long uptime, prev_uptime;      // uptime of system in seconds
+unsigned long prev_cpu_ticks[8];        // 이전 CPU tick (CPU states summary에서 사용)
+unsigned long prev_cpu_time[MAX_PID];   // previous total time spent for process
 
 proc plist[MAX_PROC];
 int num_of_proc;
-int row, col;                       // 출력 기준이 되는 row, col좌표
+int row, col;                           // 출력 기준이 되는 row, col좌표
 
 void init(); // 프로세스 정보 가져오기 전에 필요하거나 미리 설정 가능한 값을 가져오는 함수
 void make_proclist_entry(); // 프로세스의 정보를 파싱 및 가공하는 함수
@@ -72,13 +74,13 @@ void get_uptime(); // 시스템의 uptime을 가져오는 함수
 void get_username(uid_t uid, char user[16]); // username 가져오는 함수
 void calc_cpu_usage(char *stat_path, proc *proc_entry); // cpu usage를 계산하는 함수
 void get_msize(char *pid_path, proc *proc_entry); // vsz, rss, shm값을 가져오는 함수
-void calc_mem_usage(unsigned long rss, double *ret); // memory usage를 계산하는 함수
+void calc_mem_usage(unsigned long rss, long double *ret); // memory usage를 계산하는 함수
 void get_state(char *pid_path, pid_t pid, char state[8]); // state를 가져오는 함수
 void get_priority(char *stat_path, proc *proc_entry); // priority, nice를 가져오는 함수
 void calc_time_use(proc *proc_entry); // CPU 사용시간 계산하는 함수
 void get_command(char *pid_path, proc *proc_entry); // 실행 명령어를 가져오는 함수
 
-int cmp(const void *entry1, const void *entry2);
+int cmp(const void *p1, const void *p2);
 
 int main(){
     initscr(); // curse모드를 시작
@@ -87,12 +89,12 @@ int main(){
     timeout(50); // read blocks for 50ms delay
     curs_set(0); // 커서 숨김
 
-    init();
-    make_proclist_entry();
-    // sort_proclist();
     cur_time = time(NULL);
     row = 0;
     col = 0;
+    init();
+    make_proclist_entry();
+    sort_proclist();
     print_summary();
     print_proclist();
     refresh(); // 실제 화면에 출력
@@ -105,9 +107,10 @@ int main(){
             clear(); // 화면 클리어
             clear_proclist();
             make_proclist_entry();
+            sort_proclist();
             print_summary();
             print_proclist();
-            refresh(); // 실제 화면에 출력
+            refresh();
             prev_time = cur_time;
         }
     }
@@ -213,11 +216,11 @@ void make_proclist_entry(){
 }
 
 void sort_proclist(){
-    // CPU Usage 기준 내림차순 정렬
+    qsort(plist, num_of_proc, sizeof(plist[0]), cmp);
 }
 
-int cmp(const void *entry1, const void *entry2){
-    // qsort compare 함수
+int cmp(const void *p1, const void *p2){
+    return ((proc *)p1)->cpu_usage < ((proc *)p2)->cpu_usage;
 }
 
 int get_tty_nr(pid_t pid){
@@ -290,8 +293,8 @@ void get_username(uid_t uid, char user[16]){
 }
 
 void calc_cpu_usage(char *stat_path, proc *proc_entry){
-    double elapsed_time; // total elapsed time since process started in seconds
-    double usage;
+    long double elapsed_time; // total elapsed time since process started
+    long double usage;
     char buf[BUF_SIZE];
     FILE *fp = fopen(stat_path, "r"); // open stat file
     fgets(buf, BUF_SIZE, fp);
@@ -311,11 +314,20 @@ void calc_cpu_usage(char *stat_path, proc *proc_entry){
         }
         ptr = strtok(NULL, " ");
     }
+    // based on the interval since the last refresh
+    // prev cpu total time 값이 있으면 리프레시 된 경우이므로 이전 값과의 차이 계산
     proc_entry->total_time = proc_entry->utime + proc_entry->stime;
-    elapsed_time = (double)(uptime-(proc_entry->st_time/clk_tck));
-    usage = ((proc_entry->total_time/clk_tck)/elapsed_time)*100;
+    if(prev_cpu_time[proc_entry->pid] != 0){
+        elapsed_time = (long double)(cur_time-prev_time);
+        usage = (((proc_entry->total_time-prev_cpu_time[proc_entry->pid])/elapsed_time)/clk_tck)*100;
+    }
+    else{
+        elapsed_time = (long double)(uptime-proc_entry->st_time);
+        usage = ((proc_entry->total_time/clk_tck)/elapsed_time)*100;
+    }
     if(usage<0 || usage>100 || isnan(usage) || isinf(usage)) usage = 0; // 표현할 수 없는 값 예외처리
     proc_entry->cpu_usage = usage;
+    prev_cpu_time[proc_entry->pid] = proc_entry->total_time; // previous cpu total time
     fclose(fp);
 }
 
@@ -363,7 +375,7 @@ void get_msize(char *pid_path, proc *proc_entry){
     fclose(fp);
 }
 
-void calc_mem_usage(unsigned long rss, double *ret){
+void calc_mem_usage(unsigned long rss, long double *ret){
     // Calculate RSS value, divided by the size of the real memory in use, 
     // in the machine in KB, times 100, rounded to the nearest full percentage point.
     // Further, the rounding to the nearest percentage point. 
@@ -643,7 +655,7 @@ void print_proclist(){
     int cur_row = 7;
     for(int i=row; i<num_of_proc; ++i){
         if(cur_row > LINES) break; // 한 행씩 내려가며 출력, 높이 초과하면 출력 중지
-        sprintf(tmp, "%7u %-8s %3s %3d %7lu %7lu %7lu %s %5.1lf %5.1lf %9s %s"
+        sprintf(tmp, "%7u %-8s %3s %3d %7lu %7lu %7lu %s %5.1Lf %5.1Lf %9s %s"
                 , plist[i].pid, plist[i].username, plist[i].priority, plist[i].nice
                 , plist[i].vsz, plist[i].rss, plist[i].shm, plist[i].state
                 , plist[i].cpu_usage, plist[i].mem_usage, plist[i].time, plist[i].exename);
