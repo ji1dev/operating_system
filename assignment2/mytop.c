@@ -552,8 +552,8 @@ void print_summary(){
     if(uptime < 60*60) sprintf(uptime_s, "up%2d min, ", tms->tm_min);
 	else if(uptime < 60*60*24) sprintf(uptime_s, "up%2d:%02d, ", tms->tm_hour, tms->tm_min);
 	else{
-        if(tms->tm_yday > 1) sprintf(uptime_s, "up%2d day, %02d:%02d, ", tms->tm_yday, tms->tm_hour, tms->tm_min);
-        else sprintf(uptime_s, "up%2d days, %02d:%02d, ", tms->tm_yday, tms->tm_hour, tms->tm_min);
+        if(tms->tm_yday > 1) sprintf(uptime_s, "up%2d days, %02d:%02d, ", tms->tm_yday, tms->tm_hour, tms->tm_min);
+        else sprintf(uptime_s, "up%2d day, %02d:%02d, ", tms->tm_yday, tms->tm_hour, tms->tm_min);
     }
 
     // Num of users
