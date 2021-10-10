@@ -41,7 +41,11 @@ int main(){
 			}
 		}
 		b = atoi(buf); // 두번째 수
-		syscall(op, a, b, &ans); // 미리 등록한 번호에 따라 system call 호출
+		long ret = syscall(op, a, b, &ans); // 미리 등록한 번호에 따라 system call 호출
+		if(ret == -1){
+			fprintf(stderr, "error occurred while copying block data\n");
+			exit(-1);
+		}
 		printf("ans = %d\n", ans);
 	}
 	return 0;
