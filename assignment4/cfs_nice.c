@@ -55,7 +55,7 @@ void init(){
 }
 
 void test(){
-    for(int x=0; x<20; ++x){
+    for(int x=0; x<50; ++x){
         int sum = 0;
         for(int i=0; i<250; i++){
             for(int j=0; j<250; j++){
