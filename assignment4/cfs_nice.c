@@ -26,7 +26,8 @@ int main(){
             // 8~14번째 생성 프로세스까지 기본 우선순위
             // 15~21번째 생성 프로세스까지 높은 우선순위를 부여
             if(i < 7) setpriority(PRIO_PROCESS, getpid(), 19);
-            else if(i < 14) setpriority(PRIO_PROCESS, getpid(), -20);
+            else if(i < 14) setpriority(PRIO_PROCESS, getpid(), 0);
+            else setpriority(PRIO_PROCESS, getpid(), -20);
             atexit(exit_func); // 종료 루틴 등록
             test();
             exit(0);
