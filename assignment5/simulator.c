@@ -61,7 +61,7 @@ void run(){
     int type;
     while(1){
         init();
-        printf("\n1: OPT / 2: FIFO / 3: LRU / 4: Second-Chance / Others: exit\n");
+        printf("\n1: OPT / 2: FIFO / 3: LRU / 4: Second-Chance / Other num: exit\n");
         printf("Input simulation type : ");
         scanf("%d", &type);
         if(type>=1 && type<=4){
@@ -162,7 +162,7 @@ void showResult(int type){
 
 int findVictim(int prs, int dir){
     int v = 0, max_dist = -1;
-    // 앞으로 가장 오랜시간 사용되지 않을 page를 victim으로 선택
+    // 앞으로 가장 오랜시간 사용되지 않을 page를 victim으로 선택 (Optimal)
     if(dir == 1){
         // 각 frame에 할당된 page들 중 prs에서 가장 멀리 있는 것을 찾음
         for(int i=0; i<NUM_OF_FRAME; ++i){
@@ -172,11 +172,12 @@ int findVictim(int prs, int dir){
                 dist++;
                 // 현재 frame에 할당된 page의 번호를 prs에서 찾은 경우,
                 // 현재까지 가장 멀리있는 page보다 더 멀리있으면 prs 거리와 victim을 갱신함
-                if(MEM[i] == PRS[j]){
+                if(!isFound && (MEM[i]==PRS[j])){
                     isFound = true; // prs에서 일치하는 page 찾은 경우 flag 활성화
                     if(dist > max_dist){
                         max_dist = dist;
                         v = i;
+                        break;
                     }
                 }
             }
@@ -188,7 +189,7 @@ int findVictim(int prs, int dir){
             }
         }
     }
-    // 과거에 오랜시간 사용되지 않은 page를 victim으로 선택
+    // 과거에 오랜시간 사용되지 않은 page를 victim으로 선택 (LRU)
     else if(dir == -1){
         for(int i=0; i<NUM_OF_FRAME; ++i){
             int dist = 0;
