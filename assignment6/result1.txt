@@ -1,0 +1,128 @@
+[*] Input num of vehicles : 10
+Total number of vehicles : 10
+Start point : 2 4 3 2 4 4 4 1 1 2 
+tick : 1
+===============================
+Passed Vehicle
+Car 
+Waiting Vehicle
+Car 
+===============================
+tick : 2
+===============================
+Passed Vehicle
+Car 2 
+Waiting Vehicle
+Car 
+===============================
+tick : 3
+===============================
+Passed Vehicle
+Car 4 
+Waiting Vehicle
+Car 3 
+===============================
+tick : 4
+===============================
+Passed Vehicle
+Car 
+Waiting Vehicle
+Car 3 
+===============================
+tick : 5
+===============================
+Passed Vehicle
+Car 2 
+Waiting Vehicle
+Car 3 
+===============================
+tick : 6
+===============================
+Passed Vehicle
+Car 4 
+Waiting Vehicle
+Car 3 4 
+===============================
+tick : 7
+===============================
+Passed Vehicle
+Car 
+Waiting Vehicle
+Car 4 4 
+===============================
+tick : 8
+===============================
+Passed Vehicle
+Car 3 
+Waiting Vehicle
+Car 4 4 
+===============================
+tick : 9
+===============================
+Passed Vehicle
+Car 1 
+Waiting Vehicle
+Car 4 4 1 
+===============================
+tick : 10
+===============================
+Passed Vehicle
+Car 
+Waiting Vehicle
+Car 4 4 2 
+===============================
+tick : 11
+===============================
+Passed Vehicle
+Car 1 
+Waiting Vehicle
+Car 4 4 2 
+===============================
+tick : 12
+===============================
+Passed Vehicle
+Car 
+Waiting Vehicle
+Car 4 4 
+===============================
+tick : 13
+===============================
+Passed Vehicle
+Car 2 
+Waiting Vehicle
+Car 4 
+===============================
+tick : 14
+===============================
+Passed Vehicle
+Car 4 
+Waiting Vehicle
+Car 4 
+===============================
+tick : 15
+===============================
+Passed Vehicle
+Car 
+Waiting Vehicle
+Car 
+===============================
+tick : 16
+===============================
+Passed Vehicle
+Car 4 
+Waiting Vehicle
+Car 
+===============================
+tick : 17
+===============================
+Passed Vehicle
+Car 
+Waiting Vehicle
+Car 
+===============================
+Number of vehicles passed from each start point
+P1 : 2 times
+P2 : 3 times
+P3 : 1 times
+P4 : 4 times
+Total time : 17 ticks
