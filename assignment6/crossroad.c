@@ -49,11 +49,7 @@ void init(){
         exit(0);
     }
 
-    // int test[] = {4, 4, 3, 4, 1, 2, 2, 3, 3, 3};
-    for(int i=0; i<NUM_OF_CAR; ++i){
-        SEQ[i] = rand()%4+1;
-        // SEQ[i] = test[i];
-    }
+    for(int i=0; i<NUM_OF_CAR; ++i) SEQ[i] = rand()%4+1;
 
     printf("Total number of vehicles : %d\n", NUM_OF_CAR);
     printf("Start point : ");
@@ -88,12 +84,12 @@ void solve(){
         PASS_NOW = -1; // 현재 시점에 도착한 차량의 출발 지점 번호 초기화
     }
 
-    // 모든 차량 통과했음이 검증되면 결과 출력
-    if(PASS_NOW == -1){
+    // 대기 차량 없는지 확인 후 최종 결과 출력
+    if(WAITING == 0){
         ELAPSED++;
         showStat(ELAPSED);
         showResult(ELAPSED);
-    } 
+    }
 }
 
 void ready(int t){
